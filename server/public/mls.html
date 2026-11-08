@@ -40,7 +40,22 @@ button:disabled{opacity:.5}
 #mls-ds-keyboard button:active{background:#c4c5f2}
 #ds-room-indicator .signal{color:#326b47}
 @media(max-width:560px){body{margin:4px;padding:5px}fieldset{padding:6px}#ds-controls button{font-size:9px}}
+#pixel-print{display:none}
+@page{size:A4 portrait;margin:0}
+@media print{
+  html,body{width:210mm!important;min-height:0!important;height:auto!important;
+    margin:0!important;padding:0!important;background:#fff!important;overflow:visible!important}
+  body>*:not(#pixel-print){display:none!important}
+  #pixel-print,#pixel-print[hidden]{display:block!important;position:static!important;
+    width:210mm!important;margin:0!important;padding:0!important;overflow:visible!important}
+  #pixel-print .pixel-page{display:block!important;position:relative!important;width:512px!important;
+    height:1040px!important;min-width:512px!important;min-height:1040px!important;
+    max-width:none!important;margin:0 auto!important;border:0!important;object-fit:fill!important;
+    image-rendering:pixelated!important;break-after:page!important;page-break-after:always!important}
+  #pixel-print .pixel-page:last-child{break-after:auto!important;page-break-after:auto!important}
+}
 </style></head><body>
+<section id="pixel-print" aria-label="PictoRust MLS original pixel PDF" hidden></section>
 <h1>PictoRust · OpenMLS Gruppenmodus</h1>
 <p class="warning">Experimentelle Browser-WASM-Integration, nur lokal. Einladungen und Identitätsfingerprints müssen über einen unabhängig verifizierten Kanal ausgetauscht werden. Kein sicherheitsgeprüfter Messenger.</p>
 <p id="status" role="status">WASM wird geladen …</p>
