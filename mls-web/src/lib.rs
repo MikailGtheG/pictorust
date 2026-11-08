@@ -78,11 +78,11 @@ impl BrowserMlsClient {
     /// fingerprints out of band; ephemeral labels are not authorization.
     pub fn members(&self) -> Result<Array, JsValue> {
         let out = Array::new();
-        for (leaf, credential, key) in self.client.members().map_err(failure)? {
+        for member in self.client.members().map_err(failure)? {
             let obj = Object::new();
-            put(&obj, "leaf", JsValue::from_f64(f64::from(leaf)))?;
-            put(&obj, "credentialHex", JsValue::from_str(&hex::encode(credential)))?;
-            put(&obj, "signatureKeyHex", JsValue::from_str(&hex::encode(key)))?;
+            put(&obj, "leaf", JsValue::from_f64(f64::from(member.leaf)))?;
+            put(&obj, "credentialHex", JsValue::from_str(&hex::encode(member.credential)))?;
+            put(&obj, "signatureKeyHex", JsValue::from_str(&hex::encode(member.signature_key)))?;
             out.push(&obj);
         }
         Ok(out)
