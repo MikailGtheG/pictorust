@@ -481,16 +481,16 @@ fn requested_capability(headers: &HeaderMap) -> Option<&str> {
     let mut saw_protocol = false;
     let mut candidate: Option<&str> = None;
     for header in headers.get_all(SEC_WEBSOCKET_PROTOCOL).iter() {
-        let Ok(header) = header.to_str() else { return false; };
+        let Ok(header) = header.to_str() else { return None; };
         for part in header.split(',').map(str::trim) {
             if part == "picto.v1" {
-                if saw_protocol { return false; }
+                if saw_protocol { return None; }
                 saw_protocol = true;
             } else if let Some(value) = part.strip_prefix("auth.") {
-                if candidate.is_some() { return false; }
+                if candidate.is_some() { return None; }
                 candidate = Some(value);
             } else {
-                return false;
+                return None;
             }
         }
     }
