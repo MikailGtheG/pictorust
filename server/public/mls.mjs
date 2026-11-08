@@ -1,4 +1,5 @@
 import init, { BrowserMlsClient } from "/mls/pkg/pictorust_mls_web.js";
+import { preparePictoRustPrint } from "/pictorust-export.mjs";
 
 const $ = id => document.getElementById(id);
 const te = new TextEncoder();
@@ -31,6 +32,7 @@ function roster() {
       }
     }
     $("send").disabled=!client.synchronized() || socket?.readyState!==WebSocket.OPEN;
+    $("mls-epoch").textContent=String(client.epoch());
     message(`MLS-Epoche ${client.epoch()} · ${members.length} Mitglied(er)`);
   }catch { $("send").disabled=true; }
 }
@@ -51,15 +53,124 @@ function readCredentials() {
     throw Error("Raum-ID und Zugangstoken erforderlich");
   return {room,token};
 }
+const CHAT_MAX_POINTS=1200;
+const history=[];
+let drawingStrokes=[],activeStroke=null,pointTotal=0,penMode=false;
+const board=$("ds-board"),paint=$("mls-drawing"),pen=paint.getContext("2d");
+function drawLines(lines,context) {
+  context.strokeStyle="#111";context.lineWidth=2.5;context.lineJoin="round";context.lineCap="round";
+  for(const stroke of lines) {
+    if(!stroke.length)continue;
+    context.beginPath();
+    context.moveTo(stroke[0][0],stroke[0][1]);
+    for(const xy of stroke.slice(1))context.lineTo(xy[0],xy[1]);
+    if(stroke.length===1)context.lineTo(stroke[0][0]+0.1,stroke[0][1]+0.1);
+    context.stroke();
+  }
+}
+function redraw() {
+  pen.clearRect(0,0,paint.width,paint.height);
+  drawLines(drawingStrokes,pen);
+}
+function clearDrawing(){drawingStrokes=[];activeStroke=null;pointTotal=0;redraw();}
+function pointerCoords(e) {
+  const rect=paint.getBoundingClientRect();
+  return [
+    Math.max(0,Math.min(512,Math.round((e.clientX-rect.left)*512/rect.width))),
+    Math.max(0,Math.min(170,Math.round((e.clientY-rect.top)*170/rect.height)))
+  ];
+}
+paint.addEventListener("pointerdown",e=>{
+  if(!penMode||pointTotal>=CHAT_MAX_POINTS)return;
+  activeStroke=[pointerCoords(e)];drawingStrokes.push(activeStroke);pointTotal++;
+  paint.setPointerCapture(e.pointerId);redraw();
+});
+paint.addEventListener("pointermove",e=>{
+  if(!activeStroke||pointTotal>=CHAT_MAX_POINTS)return;
+  const xy=pointerCoords(e),last=activeStroke[activeStroke.length-1];
+  if(xy[0]!==last[0]||xy[1]!==last[1]){
+    activeStroke.push(xy);pointTotal++;redraw();
+  }
+});
+for(const ev of ["pointerup","pointercancel","lostpointercapture"]){
+  paint.addEventListener(ev,()=>{activeStroke=null;});
+}
+function choosePen(on) {
+  penMode=on;board.classList.toggle("pen-mode",on);
+  board.classList.toggle("text-mode",!on);
+  $("mls-pen-tool").setAttribute("aria-pressed",String(on));
+  $("mls-text-tool").setAttribute("aria-pressed",String(!on));
+  if(!on)$("message").focus();
+}
+$("mls-pen-tool").addEventListener("click",()=>choosePen(true));
+$("mls-text-tool").addEventListener("click",()=>choosePen(false));
+$("mls-clear").addEventListener("click",clearDrawing);
+$("mls-undo").addEventListener("click",()=>{
+  const removed=drawingStrokes.pop();if(removed)pointTotal-=removed.length;
+  activeStroke=null;redraw();
+});
+document.querySelectorAll("#mls-ds-keyboard [data-char]").forEach(button=>{
+  button.addEventListener("click",()=>{
+    choosePen(false);
+    const input=$("message"),pos=input.selectionStart;
+    input.setRangeText(button.dataset.char,pos,input.selectionEnd,"end");
+    input.focus();
+  });
+});
+function validDrawMessage(item){
+  if(!item||item.v!==2||typeof item.text!=="string"||item.text.length>1900
+     ||typeof item.nickname!=="string"||item.nickname.length>40
+     ||!Array.isArray(item.strokes))return false;
+  let points=0;
+  for(const line of item.strokes) {
+    if(!Array.isArray(line))return false;
+    for(const xy of line) {
+      if(++points>CHAT_MAX_POINTS || !Array.isArray(xy)||xy.length!==2
+         ||!xy.every(Number.isInteger)||xy[0]<0||xy[0]>512||xy[1]<0||xy[1]>170)return false;
+    }
+  }
+  return true;
+}
+function parseMessage(payload) {
+  const decoded=td.decode(payload);
+  try{
+    const value=JSON.parse(decoded);
+    if(validDrawMessage(value))return value;
+  }catch{}
+  return {v:2,text:decoded,nickname:"Mitglied",strokes:[]};
+}
 function render(payload) {
-  const text=td.decode(payload);
-  const div=document.createElement("article");
-  div.className="entry";
-  // No HTML interpretation or innerHTML: encrypted messages are always text.
-  div.textContent=text;
+  const data=parseMessage(payload);
+  // Keep bounded, volatile history; nothing is persisted by the relay.
+  if(history.length>=200)history.shift();
+  history.push({nickname:data.nickname,text:data.text,strokes:data.strokes});
+  const div=document.createElement("article");div.className="entry";
+  if(data.nickname!=="Mitglied") {
+    const name=document.createElement("div");name.className="who";
+    name.textContent=data.nickname;div.append(name);
+  }
+  if(data.text){const text=document.createElement("span");text.textContent=data.text;div.append(text);}
+  if(data.strokes.length){
+    const canvas=document.createElement("canvas");canvas.width=512;canvas.height=170;
+    drawLines(data.strokes,canvas.getContext("2d"));
+    const image=document.createElement("img");image.alt="Verschlüsselte Zeichnung";
+    image.src=canvas.toDataURL("image/png");div.append(image);
+  }
   $("feed").append(div);
   $("feed").scrollTop=$("feed").scrollHeight;
 }
+$("mls-pdf").addEventListener("click",async()=>{
+  if(!history.length){message("Keine Nachrichten zum Export vorhanden");return;}
+  const button=$("mls-pdf");button.disabled=true;
+  try{
+    await preparePictoRustPrint(history,"A",$("pixel-print"));
+    window.print();
+  }catch{message("Original-Pixel-PDF konnte nicht erstellt werden");}
+  finally{button.disabled=false;}
+});
+$("mls-clear-history").addEventListener("click",()=>{
+  history.length=0;$("feed").replaceChildren();$("pixel-print").replaceChildren();
+});
 async function onPacket(buffer) {
   if(!client||!socket || buffer.byteLength>MAX_WIRE||buffer.byteLength<3) return;
   const wire=new Uint8Array(buffer);
@@ -222,11 +333,17 @@ $("remove").addEventListener("click",async()=>{
 $("send").addEventListener("click",()=>{
   try {
     const value=$("message").value.trim();
-    if(!value)return;
-    const wire=client.send(te.encode(value));
+    if(!value && !drawingStrokes.length)return;
+    const nickname=$("name").value.trim().slice(0,40)||"Gast";
+    // JSON v2 contains plaintext only INSIDE the MLS authenticated encryption.
+    const draft={v:2,nickname,text:value,
+      strokes:drawingStrokes.map(line=>line.map(pt=>[...pt]))};
+    const plaintext=te.encode(JSON.stringify(draft));
+    if(plaintext.length>8000)throw Error("Text und Zeichnung sind zu groß");
+    const wire=client.send(plaintext);
     transmit(wire);
-    render(te.encode("Ich: "+value));
-    $("message").value="";
+    render(plaintext);
+    $("message").value="";clearDrawing();
   }catch(e){client?.mark_transport_interrupted();$("send").disabled=true;message("Senden fehlgeschlagen: "+e.message);}
 });
 $("reset").addEventListener("click",()=>{
@@ -234,7 +351,8 @@ $("reset").addEventListener("click",()=>{
   client?.dispose();client=null;isOwner=false;sentFrames.clear();
   for(const id of ["token","room","mine","own-signer","own-package","welcome","trusted-owner","invite-package","verified-fingerprint","issued-welcome","message"])
     $(id).value="";
-  $("feed").replaceChildren();$("members").replaceChildren();
+  history.length=0;$("feed").replaceChildren();$("pixel-print").replaceChildren();
+  clearDrawing();$("members").replaceChildren();
   $("send").disabled=true;
   makeIdentity().catch(e=>message(e.message));
 });
