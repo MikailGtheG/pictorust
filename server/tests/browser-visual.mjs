@@ -40,7 +40,7 @@ async function main() {
     bob = await bobContext.newPage();
     for (const page of [alice, bob]) {
       page.on("pageerror", error => errors.push(error.message));
-      await page.goto(origin, { waitUntil: "networkidle" });
+      await page.goto(origin + "/?legacy=1", { waitUntil: "networkidle" });
       await page.locator("#messages").waitFor({ state: "visible" });
       // Fail if the actual original artwork is missing: screenshots must
       // represent the main-fork images, never CSS placeholders.
@@ -425,7 +425,7 @@ async function main() {
     const mobileContext = await browser.newContext({ ...devices["iPhone 13"], browserName: undefined });
     mobile = await mobileContext.newPage();
     mobile.on("pageerror", error => errors.push(error.message));
-    await mobile.goto(origin, { waitUntil: "networkidle" });
+    await mobile.goto(origin + "/?legacy=1", { waitUntil: "networkidle" });
     await mobile.locator("#own-fingerprint").waitFor();
     await waitForIdentity(mobile);
     await mobile.locator("#nickname").fill("Mobil 📱");
