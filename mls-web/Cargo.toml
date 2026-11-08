@@ -19,3 +19,8 @@ hex = "0.4"
 getrandom = { version = "0.4", features = ["wasm_js"] }
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+
+# CI must not download an unpinned Binaryen archive at build time.
+# wasm-bindgen output is verified directly by the browser E2E workflow.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
