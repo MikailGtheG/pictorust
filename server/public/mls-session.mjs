@@ -122,6 +122,19 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
       const requests=await response.json();
       for(const request of requests){
         if(closed)break;
+        // The relay verified possession of the old member-only bearer,
+        // so only that member may ask to replace its previous leaf.
+        if(request.previous_leaf!==null && request.previous_leaf!==undefined){
+          const oldLeaf=request.previous_leaf;
+          if(!Number.isInteger(oldLeaf)||oldLeaf<=0)
+            throw Error("Ungültige vorherige MLS-Mitgliedschaft");
+          const removal=client.remove_member(oldLeaf);
+          transmit(removal);
+          const revoke=await fetch("/mls/revoke/"+room()+"/"+oldLeaf,{
+            method:"POST",cache:"no-store",headers:auth()
+          });
+          if(!revoke.ok)throw Error("Altgerät konnte nicht widerrufen werden: "+revoke.status);
+        }
         const previous=new Set(client.members().map(m=>m.signatureKeyHex));
         const [commit,welcome,tree]=client.add_member(fromBase64(request.key_package));
         const member=client.members().find(m=>!previous.has(m.signatureKeyHex));
