@@ -36,7 +36,9 @@ try {
   await bob.locator("#messages").getByText("Alle Mitglieder bereit").waitFor({timeout:12000});
   await charlie.locator("#messages").getByText("Alle Mitglieder bereit").waitFor({timeout:12000});
 
-  await alice.locator("#disconnect").click();
+  // The disconnect control lives in the hidden advanced-settings panel;
+  // invoke the existing button handler without opening or redesigning the UI.
+  await alice.locator("#disconnect").evaluate(button=>button.click());
   await alice.waitForFunction(()=>document.querySelector("#send").disabled);
   // The server must not terminate valid non-owner WebSockets.
   await bob.locator("#text").fill("Bob schreibt trotz Owner-Offline");
