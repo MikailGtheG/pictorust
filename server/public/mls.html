@@ -18,6 +18,28 @@ button:disabled{opacity:.5}
 .warning{background:#fff2de;border-left:4px solid #b48042;padding:12px}
 #members{font-family:monospace;overflow-wrap:anywhere;font-size:11px}
 .inline{display:flex;gap:8px;flex-wrap:wrap}.inline>*{flex:1}
+/* Real DS sprite stage: original background and drawing UI, not a mockup. */
+#ds-stage{position:relative;width:min(512px,100%);aspect-ratio:256/384;margin:14px auto;background:#f5f5f5 url("/original/images/background.png") center/100% 100% no-repeat;image-rendering:pixelated;box-shadow:0 3px 10px #0004;border:1px solid #555}
+#ds-top{position:absolute;left:0;top:0;width:100%;height:50%;overflow:hidden}
+#ds-room-indicator{position:absolute;left:6%;top:3%;font-size:clamp(10px,1.8vw,15px);color:#29345b}
+#feed{position:absolute;top:13%;left:6.2%;width:87.6%;height:84%;min-height:0;max-height:none;overflow:auto;background:transparent;border:0;padding:0;text-align:left;scrollbar-width:thin}
+#feed .entry{border:1px solid #a4b0cd;background:repeating-linear-gradient(to bottom,#fff 0,#fff 20px,#d6dcef 21px);margin:0 0 2px;padding:2px 4px;white-space:pre-wrap;overflow-wrap:anywhere;color:#161616;font-size:clamp(10px,1.6vw,14px);min-height:23px}
+#feed .entry .who{display:inline-block;background:#bbc6ed;color:#23436c;border:1px solid #8a9dbb;padding:1px 3px;margin:0 0 2px;font-size:11px}
+#feed .entry img{display:block;width:100%;max-height:90px;object-fit:contain;image-rendering:pixelated}
+#ds-bottom{position:absolute;top:50%;left:0;width:100%;height:50%;background:url("/original/images/drawui.png") center/100% 100% no-repeat}
+#ds-board{position:absolute;left:8.2%;top:7.8%;width:85%;height:43.75%;overflow:hidden}
+#message{position:absolute;inset:0;width:100%;height:100%;min-height:0;padding:3px;resize:none;border:0;background:transparent;outline:none;font:clamp(11px,1.7vw,15px) nds,monospace}
+#mls-drawing{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;touch-action:none;cursor:crosshair}
+#ds-board.text-mode #mls-drawing{pointer-events:none;opacity:0}
+#ds-board.pen-mode #message{pointer-events:none;opacity:0}
+#ds-controls{position:absolute;left:7%;right:6%;bottom:0;display:flex;gap:2px;align-items:center}
+#ds-controls button{flex:1;margin:1px;padding:3px 0;font:11px nds,monospace;border:1px solid #949abc;background:#dce1ef;min-height:26px}
+#ds-controls #send{background:#c5e0b8}
+#mls-ds-keyboard{position:absolute;left:8%;right:13%;top:56%;height:26%;display:grid;grid-template-columns:repeat(10,1fr);gap:1px}
+#mls-ds-keyboard button{border:1px solid #b1b4c5;background:#f9f9fd;padding:1px;margin:0;min-width:0;font:clamp(9px,1.4vw,12px) nds,monospace}
+#mls-ds-keyboard button:active{background:#c4c5f2}
+#ds-room-indicator .signal{color:#326b47}
+@media(max-width:560px){body{margin:4px;padding:5px}fieldset{padding:6px}#ds-controls button{font-size:9px}}
 </style></head><body>
 <h1>PictoRust · OpenMLS Gruppenmodus</h1>
 <p class="warning">Experimentelle Browser-WASM-Integration, nur lokal. Einladungen und Identitätsfingerprints müssen über einen unabhängig verifizierten Kanal ausgetauscht werden. Kein sicherheitsgeprüfter Messenger.</p>
@@ -46,9 +68,36 @@ button:disabled{opacity:.5}
 <button id="remove">Mitglied ausschließen und Epoche wechseln</button>
 </fieldset>
 <fieldset><legend>4 · Verschlüsselter Gruppenchat</legend>
-<div id="feed" role="log" aria-live="polite"></div>
-<label>Nachricht <textarea id="message" maxlength="1900"></textarea></label>
-<button id="send" disabled>MLS-verschlüsselt senden</button>
+<div id="ds-stage" aria-label="Original PictoChat Zweibildschirm-Ansicht mit OpenMLS">
+  <section id="ds-top" aria-label="Empfangene Chatnachrichten">
+    <div id="ds-room-indicator">Room A · <span class="signal">MLS <span id="mls-epoch">–</span></span></div>
+    <div id="feed" role="log" aria-live="polite"></div>
+  </section>
+  <section id="ds-bottom" aria-label="Eingabe auf dem unteren Nintendo-DS-Bildschirm">
+    <div id="ds-board" class="text-mode">
+      <textarea id="message" maxlength="1900" aria-label="Nachricht eingeben" spellcheck="false"></textarea>
+      <canvas id="mls-drawing" width="512" height="170" aria-label="Zeichnen"></canvas>
+    </div>
+    <div id="mls-ds-keyboard" role="group" aria-label="Deutsch und Türkisch">
+      <button type="button" data-char="ä">ä</button><button type="button" data-char="ö">ö</button>
+      <button type="button" data-char="ü">ü</button><button type="button" data-char="ß">ß</button>
+      <button type="button" data-char="ğ">ğ</button><button type="button" data-char="ş">ş</button>
+      <button type="button" data-char="ç">ç</button><button type="button" data-char="ı">ı</button>
+      <button type="button" data-char="İ">İ</button><button type="button" data-char="😊">😊</button>
+    </div>
+    <div id="ds-controls">
+      <button type="button" id="mls-text-tool" aria-pressed="true">Text</button>
+      <button type="button" id="mls-pen-tool" aria-pressed="false">Stift</button>
+      <button type="button" id="mls-undo">Rückgängig</button>
+      <button type="button" id="mls-clear">Löschen</button>
+      <button id="send" type="button" disabled>MLS senden</button>
+    </div>
+  </section>
+</div>
+<div class="inline">
+  <button id="mls-pdf" type="button">Original-Pixel-PDF exportieren</button>
+  <button id="mls-clear-history" type="button">Lokalen Verlauf löschen</button>
+</div>
 </fieldset>
 <a href="/">Zur klassischen PictoRust-Oberfläche</a>
 <script type="module" src="/mls/app.mjs"></script>
