@@ -486,11 +486,10 @@ fn requested_capability(headers: &HeaderMap) -> Option<&str> {
             if part == "picto.v1" {
                 if saw_protocol { return None; }
                 saw_protocol = true;
-            } else if let Some(value) = part.strip_prefix("auth.") {
+            } else {
+                let value = part.strip_prefix("auth.")?;
                 if candidate.is_some() { return None; }
                 candidate = Some(value);
-            } else {
-                return None;
             }
         }
     }
