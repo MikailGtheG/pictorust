@@ -273,21 +273,33 @@ async fn mls_wasm_asset(Path(name): Path<String>) -> Result<Response, StatusCode
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-async fn mls_home() -> (
-    [(axum::http::header::HeaderName, &'static str); 5],
-    &'static str,
-) {
-    (
-        [
-            (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (axum::http::header::CACHE_CONTROL, "no-store"),
-            (axum::http::header::CONTENT_SECURITY_POLICY,
-                "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws://127.0.0.1:8787 ws://localhost:8787; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"),
-            (axum::http::header::REFERRER_POLICY, "no-referrer"),
-            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-        ],
-        include_str!("../public/mls.html"),
-    )
+fn public_csp(style_self: bool) -> String {
+    let mut connect=String::from("ws://127.0.0.1:8787 ws://localhost:8787");
+    if let Ok(origin)=std::env::var("PICTORUST_PUBLIC_ORIGIN") {
+        if valid_public_origin(&origin) {
+            connect.push(' ');
+            connect.push_str(&origin.replacen("https://","wss://",1));
+        }
+    }
+    let style=if style_self {"'self' 'unsafe-inline'"} else {"'unsafe-inline'"};
+    format!("default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src {style}; img-src 'self' data:; font-src 'self'; connect-src 'self' {connect}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+}
+
+fn serve_html(document: &'static str, style_self: bool) -> Response {
+    let csp=public_csp(style_self);
+    Response::builder()
+        .header(axum::http::header::CONTENT_TYPE,"text/html; charset=utf-8")
+        .header(axum::http::header::CACHE_CONTROL,"no-store")
+        .header(axum::http::header::CONTENT_SECURITY_POLICY,csp)
+        .header(axum::http::header::REFERRER_POLICY,"no-referrer")
+        .header(axum::http::header::X_CONTENT_TYPE_OPTIONS,"nosniff")
+        .header("Permissions-Policy","camera=(), microphone=(), geolocation=()")
+        .body(Body::from(document))
+        .expect("valid static HTML response")
+}
+
+async fn mls_home() -> Response {
+    serve_html(include_str!("../public/mls.html"),true)
 }
 
 async fn mls_session_module() -> (
@@ -326,17 +338,8 @@ async fn healthz() -> (
     )
 }
 
-async fn dev_home() -> ([(axum::http::header::HeaderName, &'static str); 5], &'static str) {
-    (
-        [
-            (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (axum::http::header::CACHE_CONTROL, "no-store"),
-            (axum::http::header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws://127.0.0.1:8787 ws://localhost:8787; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"),
-            (axum::http::header::REFERRER_POLICY, "no-referrer"),
-            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-        ],
-        include_str!("../public/index.html"),
-    )
+async fn dev_home() -> Response {
+    serve_html(include_str!("../public/index.html"),false)
 }
 
 // Stateless, time-limited HMAC bearer invitation. Never persisted.
@@ -651,7 +654,7 @@ fn origin_is_allowed(headers: &HeaderMap) -> bool {
 fn valid_public_origin(value: &str) -> bool {
     let Some(host) = value.strip_prefix("https://") else { return false; };
     !host.is_empty() && host.len() <= 253 &&
-    !host.contains(['/', '?', '#', '@', '\\', '%', ' ', '\t', '\n', '\r']) &&
+    !host.chars().any(|ch| matches!(ch, '/' | '?' | '#' | '@' | '\\' | '%' | ' ' | '\t' | '\n' | '\r')) &&
     host.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.' | b':')) &&
     !host.starts_with('.') && !host.ends_with('.') && !host.starts_with('-')
 }
