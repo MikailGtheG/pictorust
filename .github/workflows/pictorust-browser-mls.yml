@@ -72,6 +72,7 @@ jobs:
             if curl -fsS http://127.0.0.1:8787/mls/healthz >/dev/null; then
               node tests/browser-mls.mjs
               node tests/browser-original-mls.mjs
+              node tests/browser-owner-offline.mjs
               # Real HTTPS/WSS smoke using a short-lived self-signed test
               # certificate; the production TLS terminator is Caddy.
               openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
@@ -87,6 +88,7 @@ jobs:
               for tls_attempt in $(seq 1 30); do
                 if curl -kfsS https://localhost:9443/mls/healthz >/dev/null; then
                   PICTORUST_E2E_ORIGIN=https://localhost:9443 node tests/browser-original-mls.mjs
+                  PICTORUST_E2E_ORIGIN=https://localhost:9443 node tests/browser-owner-offline.mjs
                   exit 0
                 fi
                 sleep 1
