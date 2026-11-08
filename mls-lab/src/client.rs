@@ -368,3 +368,29 @@ impl Client {
         Ok(self.group.as_ref().ok_or("group needed")?.export_ratchet_tree().into())
     }
 }
+
+
+// Deliberately fail-closed checkpoint research: no resumed send without
+// a verified ordered catch-up. Ciphertext is never kept in this snapshot.
+#[cfg(test)]
+mod checkpoint_tests {
+    use super::*;
+    #[test]
+    fn snapshot_restores_group_but_does_not_authorize_stale_epoch_sends() {
+        let mut alice=Client::new(b"Alice").unwrap();
+        alice.start_group().unwrap();
+        let epoch=alice.epoch().unwrap();
+        let signing_key=alice.members().unwrap()[0].signature_key.clone();
+        let bytes=alice.checkpoint_bytes().unwrap();
+        assert!(!bytes.is_empty());
+        let mut restored=Client::restore_checkpoint_untrusted(&bytes).unwrap();
+        assert_eq!(restored.epoch().unwrap(),epoch);
+        assert_eq!(restored.members().unwrap()[0].signature_key,signing_key);
+        assert!(!restored.synchronized(),"restored state must start unsynchronized");
+        assert!(restored.send(b"must wait for authenticated catchup").is_err());
+        assert!(Client::restore_checkpoint_untrusted(b"{}").is_err());
+        let mut corrupt=bytes;
+        corrupt[0]^=0xff;
+        assert!(Client::restore_checkpoint_untrusted(&corrupt).is_err());
+    }
+}
