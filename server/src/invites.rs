@@ -11,6 +11,7 @@ const MAX_PENDING: usize=12;
 const MAX_REQUEST_BYTES: usize=12000;
 const MAX_WELCOME_BYTES: usize=32000;
 const REQUEST_LIFETIME: Duration=Duration::from_secs(120);
+const INVITATION_LIFETIME: Duration=Duration::from_secs(6 * 3600);
 
 struct Request {
     id: String,
@@ -23,6 +24,7 @@ struct Request {
 
 struct Invitation {
     digest: [u8;32],
+    created: Instant,
     requests: Vec<Request>,
 }
 
@@ -36,8 +38,9 @@ impl InviteBroker {
         }
         let digest: [u8;32]=Sha256::digest(hex::decode(secret).map_err(|_|"invalid secret")?).into();
         let mut rooms=self.rooms.lock().map_err(|_|"lock poisoned")?;
+        rooms.retain(|_,invitation|invitation.created.elapsed()<INVITATION_LIFETIME);
         if !rooms.contains_key(room) && rooms.len()>=MAX_ROOMS {return Err("invitation capacity");}
-        rooms.insert(room.into(),Invitation{digest,requests:Vec::new()});
+        rooms.insert(room.into(),Invitation{digest,created:Instant::now(),requests:Vec::new()});
         Ok(())
     }
 
@@ -49,7 +52,9 @@ impl InviteBroker {
         let digest: [u8;32]=Sha256::digest(hex::decode(secret).map_err(|_|"bad secret")?).into();
         let mut rooms=self.rooms.lock().map_err(|_|"lock poisoned")?;
         let invite=rooms.get_mut(room).ok_or("invitation missing")?;
-        if invite.digest!=digest {return Err("invalid invitation");}
+        if invite.created.elapsed()>=INVITATION_LIFETIME || invite.digest!=digest {
+            return Err("expired or invalid invitation");
+        }
         invite.requests.retain(|r|r.created.elapsed()<REQUEST_LIFETIME);
         if invite.requests.len()>=MAX_PENDING {return Err("pending join capacity");}
         if let Some(leaf)=previous_leaf {
@@ -67,6 +72,7 @@ impl InviteBroker {
     pub fn pending(&self,room:&str)->Vec<(String,String,Option<u32>)>{
         let Ok(mut rooms)=self.rooms.lock() else {return Vec::new()};
         let Some(invite)=rooms.get_mut(room) else {return Vec::new()};
+        if invite.created.elapsed()>=INVITATION_LIFETIME {return Vec::new();}
         invite.requests.retain(|r|r.created.elapsed()<REQUEST_LIFETIME);
         invite.requests.iter().filter(|r|!r.delivered && r.result.is_none()).map(|r|(r.id.clone(),r.key_package.clone(),r.previous_leaf)).collect()
     }
@@ -75,6 +81,7 @@ impl InviteBroker {
         if !valid_hex(id,32)||result.is_empty()||result.len()>MAX_WELCOME_BYTES{return Err("invalid completion");}
         let mut rooms=self.rooms.lock().map_err(|_|"lock poisoned")?;
         let invite=rooms.get_mut(room).ok_or("unknown invitation")?;
+        if invite.created.elapsed()>=INVITATION_LIFETIME {return Err("invitation expired");}
         let r=invite.requests.iter_mut().find(|r|r.id==id && r.created.elapsed()<REQUEST_LIFETIME)
             .ok_or("unknown request")?;
         if r.delivered || r.result.is_some(){return Err("already completed");}
@@ -87,6 +94,7 @@ impl InviteBroker {
         let digest:[u8;32]=Sha256::digest(hex::decode(secret).map_err(|_|"bad secret")?).into();
         let mut rooms=self.rooms.lock().map_err(|_|"lock poisoned")?;
         let invite=rooms.get_mut(room).ok_or("not found")?;
+        if invite.created.elapsed()>=INVITATION_LIFETIME {return Err("invitation expired");}
         if invite.digest!=digest{return Err("bad invitation");}
         let r=invite.requests.iter_mut().find(|r|r.id==id && r.created.elapsed()<REQUEST_LIFETIME)
             .ok_or("expired request")?;
@@ -100,6 +108,21 @@ fn valid_hex(s:&str,len:usize)->bool{s.len()==len && s.bytes().all(|b|b.is_ascii
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn expired_invites_are_removed_before_capacity_check() {
+        let b=InviteBroker::default();
+        let room="00000000000000000000000000000001";
+        b.register(room,&"ab".repeat(32)).unwrap();
+        {
+            let mut locked=b.rooms.lock().unwrap();
+            locked.get_mut(room).unwrap().created=
+                Instant::now()-INVITATION_LIFETIME-Duration::from_secs(1);
+        }
+        assert!(b.request(room,&"ab".repeat(32),"AQID",None).is_err());
+        b.register("00000000000000000000000000000002",&"cd".repeat(32)).unwrap();
+        assert!(!b.rooms.lock().unwrap().contains_key(room));
+    }
+
     #[test]
     fn authenticated_join_is_bounded_expires_and_delivers_once(){
         let b=InviteBroker::default();
