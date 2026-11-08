@@ -63,8 +63,21 @@ try{
  await bob.mouse.down();
  await bob.mouse.move(rect.x+100,rect.y+55,{steps:10});
  await bob.mouse.up();
+ const draftText=await bob.locator("#text").inputValue();
+ assert.equal(draftText,"Antwort ğ","original multilingual touch key must input into the real drawing draft");
  await bob.locator("#send").click();
- await alice.locator("#messages .entry").filter({hasText:"Antwort ğ"}).locator("img").waitFor({timeout:12000});
+ try{
+   await alice.locator("#messages .entry img").first().waitFor({timeout:12000});
+ }catch(e){
+   console.error("MLS drawing diagnostic",JSON.stringify({
+     bobStatus:await bob.locator("#status").textContent(),
+     aliceStatus:await alice.locator("#status").textContent(),
+     aliceMessages:await alice.locator("#messages").textContent(),
+     bobText:await bob.locator("#text").inputValue()
+   }));
+   throw e;
+ }
+ assert.ok((await alice.locator("#messages").textContent()).includes("Antwort ğ"));
  const nickname=await alice.locator("#messages .entry").last().locator(".who").textContent();
  assert.equal(nickname,"Gast"); // Bob intentionally kept the default nickname
  // Print must keep original raster exporter, not new HTML cards.
