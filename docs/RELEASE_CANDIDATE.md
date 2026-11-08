@@ -1,17 +1,16 @@
-# PictoRust v0.2.0-rc.1 — Release Candidate Gate
+# PictoRust v0.2.0-rc.2 — Release Candidate Gate
 
-**Status:** INTERNAL LOCALHOST TECHNICAL PREVIEW. Not a public release, production
-messenger, secure E2EE product, or authorization to redistribute third-party assets.
+**Status:** MERGE CANDIDATE / INTERNAL TECHNICAL PREVIEW. Not a public, independently audited, production-secure messenger. A maintainer states they hold a use permission for required materials; its scope should be documented before binary redistribution.
 
 **Source of truth:** `development/pictochat-modernization` and draft PR #1.
 
-## Intended scope of RC1
+## Implemented scope of RC2
 
 - Nintendo DS-inspired two-screen browser UI, text and canvas sketching.
 - Multilingual German/Turkish text and browser-generated continuous A4 PDFs.
-- Ephemeral 127.0.0.1-only Rust WebSocket relay with room capability admission.
-- Experimental browser AES-GCM + session signatures (NOT audited MLS).
-- Separate OpenMLS group lifecycle and real WebSocket transport integration tests.
+- Rust WebSocket relay bound to 127.0.0.1; opt-in HTTPS/WSS access through a configured TLS proxy and strict origin checks.
+- Real browser OpenMLS group messaging and encryption, authenticated onboarding, per-member token revocation and one bounded verified guest rejoin.
+- Legacy experimental browser AES-GCM is restricted to explicit local visual regression, and the server rejects v2 frames under public HTTPS configuration.
 - Original upstream assets and credit preserved in `CREDITS.md`.
 
 ## Exact candidate verification
@@ -23,7 +22,7 @@ loopback IP, and publishes a SHA-256 verification report (not a distributable
 binary). The new browser OpenMLS workflow tests two actual WASM clients with encrypted send and removal; the separate browser visual workflow checks the original keyboard
 hitboxes, two peers, sketches, Unicode, and actual one- and two-page A4 PDFs.
 
-A successful GitHub action is necessary but not sufficient for a release.
+A successful GitHub action is necessary but not sufficient for a release. The [RC2 changes and limitations](RELEASE_NOTES_v0.2.0-rc.2.md) are maintained separately from a formal tagged GitHub release.
 
 ## Critical blockers for a public/production release
 
@@ -56,9 +55,10 @@ A successful GitHub action is necessary but not sufficient for a release.
       add invitation cancellation/expiry UX, and audit leaked-link scenarios.
 - [ ] Independent cryptographic/security assessment, dependency and supply-chain
       review, binary integrity and protected release process.
-- [ ] Confirm the upstream Java source, Nintendo-style assets, and bundled font
-      can legally be redistributed in the intended form. Attribution alone
-      does not grant distribution rights.
+- [ ] Obtain an internal [rights record](RIGHTS_RECORD.md) proving the exact
+      scope of the maintainer-reported permission for original Java source,
+      graphics, font, modifications and public redistribution. Attribution
+      alone does not grant distribution rights.
 - [ ] Owner confirms write access and branch protection/rulesets in GitHub.
 - [x] CI green on latest integrated code: native MLS, Rust, legacy,
       original browser/PDF, release verification, and original DS OpenMLS
