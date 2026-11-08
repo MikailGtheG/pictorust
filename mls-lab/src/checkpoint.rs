@@ -45,7 +45,7 @@ impl CheckpointProvider {
 
     pub(crate) fn from_keys(keys:Vec<(Vec<u8>,Vec<u8>)>)->Result<Self,&'static str>{
         if keys.len()>MAX_ENTRIES{return Err("checkpoint entries exceeded");}
-        let mut provider=Self::default();
+        let provider=Self::default();
         {
             let mut store=provider.storage.values.write()
                 .map_err(|_|"checkpoint storage poisoned")?;
