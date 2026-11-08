@@ -88,6 +88,12 @@ async fn main() -> std::io::Result<()> {
     let secret = std::env::var("PICTOCHAT_RELAY_SECRET")
         .map_err(|_| std::io::Error::other("set PICTOCHAT_RELAY_SECRET to 64 hex digits"))?;
     let auth = Arc::new(RoomAuth::from_hex(&secret).map_err(std::io::Error::other)?);
+    if let Ok(origin)=std::env::var("PICTORUST_PUBLIC_ORIGIN") {
+        if !valid_public_origin(&origin) {
+            return Err(std::io::Error::other(
+                "PICTORUST_PUBLIC_ORIGIN must be one valid explicit https:// origin"));
+        }
+    }
     let args: Vec<String> = std::env::args().collect();
     if args.len() == 3 && args[1] == "invite" {
         let token = auth.issue(&args[2]).map_err(std::io::Error::other)?;
@@ -553,10 +559,10 @@ async fn connect(
     let time_to_live = temporary_room_deadline(&room_id)
         .map(|deadline| Duration::from_secs(deadline.saturating_sub(unix_seconds())));
     Ok(ws.protocols(["picto.v1"]).max_message_size(MAX_FRAME_BYTES).max_frame_size(MAX_FRAME_BYTES)
-        .on_upgrade(move |socket| session(socket, room, receiver, permit, room_permit, time_to_live, revoked)))
+        .on_upgrade(move |socket| session(socket, room, receiver, permit, room_permit, time_to_live, revoked, public_tls_mode())))
 }
 
-async fn session(socket: WebSocket, room: Arc<pictochat_relay::Room>, mut receiver: tokio::sync::broadcast::Receiver<Vec<u8>>, _permit: OwnedSemaphorePermit, _room_permit: OwnedSemaphorePermit, time_to_live: Option<Duration>, revocation: Option<watch::Receiver<bool>>) {
+async fn session(socket: WebSocket, room: Arc<pictochat_relay::Room>, mut receiver: tokio::sync::broadcast::Receiver<Vec<u8>>, _permit: OwnedSemaphorePermit, _room_permit: OwnedSemaphorePermit, time_to_live: Option<Duration>, revocation: Option<watch::Receiver<bool>>, require_mls_v3: bool) {
     let (mut outgoing, mut incoming) = socket.split();
     let mut quota = MessageQuota::new();
     // Not even an already connected peer may extend a temporary room past expiry.
@@ -585,7 +591,8 @@ async fn session(socket: WebSocket, room: Arc<pictochat_relay::Room>, mut receiv
             received = incoming.next() => {
                 match received {
                     Some(Ok(Message::Binary(data))) => {
-                        if !quota.permit(Instant::now()) || room.publish(data.to_vec()).is_err() { break; }
+                        if !frame_allowed_for_mode(&data, require_mls_v3) ||
+                            !quota.permit(Instant::now()) || room.publish(data.to_vec()).is_err() { break; }
                     }
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     Some(Ok(Message::Text(_))) => break, // encrypted envelopes must be binary
@@ -610,6 +617,15 @@ async fn session(socket: WebSocket, room: Arc<pictochat_relay::Room>, mut receiv
 // The browser sends both subprotocol values; only the public protocol identifier
 // is echoed. The admission token is never placed in a URL or echoed to the client.
 // This is bearer-token room admission, not participant identity nor E2EE.
+fn public_tls_mode() -> bool {
+    std::env::var("PICTORUST_PUBLIC_ORIGIN").ok()
+        .is_some_and(|origin|valid_public_origin(&origin))
+}
+
+fn frame_allowed_for_mode(payload: &[u8], require_mls_v3: bool) -> bool {
+    !require_mls_v3 || payload.first()==Some(&3)
+}
+
 fn room_capability_valid(headers: &HeaderMap, room: &str, auth: &RoomAuth) -> bool {
     requested_capability(headers).is_some_and(|token|auth.verify(room,token))
 }
@@ -671,6 +687,17 @@ mod tests {
     use axum::http::HeaderValue;
 
 
+
+    #[test]
+    fn public_mode_refuses_experimental_legacy_v2_frames() {
+        let legacy=[2u8,1u8,2u8];
+        let mls=[3u8,1u8,2u8];
+        assert!(frame_allowed_for_mode(&legacy,false),
+            "local-only backwards compatibility remains testable");
+        assert!(!frame_allowed_for_mode(&legacy,true));
+        assert!(frame_allowed_for_mode(&mls,true));
+        assert!(!frame_allowed_for_mode(&[],true));
+    }
 
     #[test]
     fn configured_https_origin_is_strictly_validated() {
