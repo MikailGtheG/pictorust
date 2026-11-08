@@ -1,8 +1,8 @@
 # PictoRust v0.2.0-rc.2 — Release Candidate Gate
 
-**Status:** MERGE CANDIDATE / INTERNAL TECHNICAL PREVIEW. Not a public, independently audited, production-secure messenger. A maintainer states they hold a use permission for required materials; its scope should be documented before binary redistribution.
+**Status:** MERGED AND PUBLISHED SOURCE-CODE TECHNICAL PRE-RELEASE (v0.2.0-rc.2). Not a stable, independently audited, production-secure messenger. A maintainer states they hold a use permission for required materials; its scope should be documented before binary redistribution.
 
-**Source of truth:** `development/pictochat-modernization` and draft PR #1.
+**Source of truth:** `master`, merged PR #1, and the published `v0.2.0-rc.2` technical pre-release.
 
 ## Implemented scope of RC2
 
@@ -22,7 +22,7 @@ loopback IP, and publishes a SHA-256 verification report (not a distributable
 binary). The new browser OpenMLS workflow tests two actual WASM clients with encrypted send and removal; the separate browser visual workflow checks the original keyboard
 hitboxes, two peers, sketches, Unicode, and actual one- and two-page A4 PDFs.
 
-A successful GitHub action is necessary but not sufficient for a release. The [RC2 changes and limitations](RELEASE_NOTES_v0.2.0-rc.2.md) are maintained separately from a formal tagged GitHub release.
+A successful GitHub Action is necessary but not sufficient for a stable release. The [RC2 changes and limitations](RELEASE_NOTES_v0.2.0-rc.2.md) are part of the publicly published GitHub **pre-release**, not a stable or independently security-certified version.
 
 ## Critical blockers for a public/production release
 
@@ -83,5 +83,4 @@ A successful GitHub action is necessary but not sufficient for a release. The [R
    invites, screen controls, mobile layout and A4 export.
 6. Document upgrades, rollback, known limitations, disclosures and credits.
 
-**Do not create a public release tag, public downloadable binary or call this
-production-ready until the release gates above are satisfied.**
+**The public source-only RC2 pre-release already exists. Do not publish production binaries, promote the pre-release to Stable or claim this is production-ready until the remaining security and verification gates are satisfied.**
