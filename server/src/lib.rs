@@ -1,7 +1,7 @@
 //! Experimental in-memory transport with room-capability admission.
 //! NOT end-to-end encrypted. Never expose to untrusted networks.
 pub mod auth;
-use std::{collections::HashMap, sync::{Arc, Mutex, Weak}};
+use std::{collections::HashMap, sync::{Arc, Mutex, Weak}, time::{Duration, Instant}};
 use tokio::sync::{broadcast, OwnedSemaphorePermit, Semaphore};
 
 pub const MAX_FRAME_BYTES: usize = 16 * 1024;
@@ -18,10 +18,32 @@ pub const MLS_KIND_KEY_PACKAGE: u8 = 4;
 pub const ROOM_CAPACITY: usize = 32;
 pub const MAX_ACTIVE_ROOMS: usize = 256;
 pub const MAX_PARTICIPANTS_PER_ROOM: usize = 16;
+/// Aggregate room-wide quota, in addition to each socket's 20 frames/second.
+pub const MAX_ROOM_FRAMES_PER_SECOND: u32 = 64;
 
 pub struct Room {
     sender: broadcast::Sender<Vec<u8>>,
     participants: Arc<Semaphore>,
+    ingress: Mutex<RoomIngressQuota>,
+}
+
+struct RoomIngressQuota {
+    started: Instant,
+    frames: u32,
+}
+
+impl RoomIngressQuota {
+    fn new() -> Self { Self { started: Instant::now(), frames: 0 } }
+
+    fn permit(&mut self, now: Instant) -> bool {
+        if now.duration_since(self.started) >= Duration::from_secs(1) {
+            self.started = now;
+            self.frames = 0;
+        }
+        if self.frames >= MAX_ROOM_FRAMES_PER_SECOND { return false; }
+        self.frames += 1;
+        true
+    }
 }
 
 impl Room {
@@ -37,6 +59,12 @@ impl Room {
     pub fn publish(&self, payload: Vec<u8>) -> Result<(), &'static str> {
         if !valid_envelope(&payload) {
             return Err("invalid frame size");
+        }
+        // Aggregate rate limiting is essential: sixteen legitimate-looking peers
+        // can otherwise publish 16×20 frames/s and overwhelm each subscriber.
+        {
+            let mut ingress = self.ingress.lock().map_err(|_| "room quota lock poisoned")?;
+            if !ingress.permit(Instant::now()) { return Err("room publish quota exceeded"); }
         }
         // No persistence: if no receiver exists, the message is dropped.
         let _ = self.sender.send(payload);
@@ -75,7 +103,7 @@ impl Rooms {
             return Err("too many active rooms");
         }
         let (sender, _) = broadcast::channel(ROOM_CAPACITY);
-        let room = Arc::new(Room { sender, participants: Arc::new(Semaphore::new(MAX_PARTICIPANTS_PER_ROOM)) });
+        let room = Arc::new(Room { sender, participants: Arc::new(Semaphore::new(MAX_PARTICIPANTS_PER_ROOM)), ingress: Mutex::new(RoomIngressQuota::new()) });
         rooms.insert(room_id.to_owned(), Arc::downgrade(&room));
         Ok(room)
     }
@@ -117,6 +145,20 @@ mod tests {
         assert!(room.publish(vec![3, 5, 42]).is_err());
         assert!(room.publish(vec![3, 1]).is_err());
         assert!(room.publish(vec![3, 1, 42].into_iter().chain(vec![0u8; MAX_FRAME_BYTES].into_iter()).collect()).is_err());
+    }
+
+    #[test]
+    fn room_quota_blocks_collective_floods_and_recovers_after_window() {
+        let room = Rooms::default().join(ID).unwrap();
+        let packet = vec![2u8; MIN_ENVELOPE_BYTES];
+        for _ in 0..MAX_ROOM_FRAMES_PER_SECOND {
+            assert!(room.publish(packet.clone()).is_ok());
+        }
+        assert_eq!(room.publish(packet).unwrap_err(), "room publish quota exceeded");
+        let mut ingress = room.ingress.lock().unwrap();
+        let previous = ingress.started;
+        assert!(!ingress.permit(previous + Duration::from_millis(999)));
+        assert!(ingress.permit(previous + Duration::from_secs(1)));
     }
 
     #[test]
