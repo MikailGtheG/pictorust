@@ -97,7 +97,7 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
           }else if(message.kind==="removed"){
             throw Error("Aus MLS-Gruppe entfernt");
           }
-        }).catch(e=>fail("MLS-Sicherheitsprüfung fehlgeschlagen: "+e.message));
+        }).catch(e=>fail("MLS-Sicherheitsprüfung fehlgeschlagen: "+(e?.message||String(e))));
       };
     });
     onReady?.();
@@ -134,7 +134,7 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
           welcome:toBase64(welcome),tree:toBase64(tree),token:admission.token
         },auth());
       }
-    }catch(e){fail("MLS-Gruppenverwaltung unterbrochen: "+e.message);}
+    }catch(e){fail("MLS-Gruppenverwaltung unterbrochen: "+(e?.message||String(e)));}
     finally{handlePending.busy=false;}
   }
   return {
