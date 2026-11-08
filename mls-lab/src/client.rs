@@ -114,7 +114,7 @@ impl Client {
         let signer:SignatureKeyPair=serde_json::from_value(snapshot.signer)
             .map_err(|_|"cannot restore signing identity")?;
         let provider=CheckpointProvider::from_keys(snapshot.storage)?;
-        let group_id=GroupId::from(snapshot.group_id);
+        let group_id=GroupId::from_slice(&snapshot.group_id);
         let group=MlsGroup::load(provider.storage(),&group_id)
             .map_err(|_|"cannot load stored MLS group")?
             .ok_or("checkpoint does not contain a full MLS group")?;
