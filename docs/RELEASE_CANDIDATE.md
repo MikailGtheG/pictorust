@@ -30,8 +30,12 @@ A successful GitHub action is necessary but not sufficient for a release.
 - [x] Build and test a **separate** OpenMLS browser WASM proof: real two-browser
       encrypted group chat, external KeyPackage fingerprint, owner verification,
       Welcome join, group epoch rotation and removal (CI-tested).
-- [ ] Integrate that audited MLS path into the actual original DS interface,
-      retire the v2 PSK default, and test multiple client/platform combinations.
+- [x] Integrate tested OpenMLS into the byte-identical original DS HTML,
+      text, sketches, touch keyboard and pixel PDF; end-to-end browser
+      test verifies joins without extra UI controls. Public TLS mode rejects
+      v2 frames; local explicit visual regression can still test legacy v2.
+- [ ] Independently audit the integrated client and test additional real
+      devices, browsers, flaky networks and multi-day group membership.
 - [x] Enforce local verified-owner policy in Rust for local add/remove and
       MLS-authenticated incoming membership Commits; fail closed on disconnect.
 - [x] Mint distinct random per-member relay tokens, enforce owner-only mint/revoke,
@@ -39,20 +43,35 @@ A successful GitHub action is necessary but not sufficient for a release.
       Three-browser Chromium and native Rust admission tests cover this.
 - [ ] Verify ordering of eviction and relay revocation under network failures,
       owner credential compromise, token expiry, and race conditions.
-- [ ] Confirm safe reconnect with missed Commits and authentic group recovery.
-- [ ] Replace manual out-of-band Welcome exchange with authenticated discovery
-      and delivery that does not expose private MLS state or invites.
+- [x] Test one bounded guest recovery after a WebSocket interruption:
+      prove previous relay bearer, owner signs MLS removal, server revokes old
+      bearer and issues new verified Welcome. Tests also deny old token.
+- [ ] Support full offline/missed-Commit catch-up, browser restarts,
+      persistent authenticated device identity, group-owner recovery,
+      multiple safe reconnects and durable encrypted key-state backups.
+- [x] Replace manual KeyPackage/Welcome transfer with a bounded automatic
+      same-origin broker and fragment-only invitation URLs. Server never
+      receives MLS private keys; replayed Welcome deliveries are rejected.
+- [ ] Bind invite links to a confirmed human identity outside the link itself,
+      add invitation cancellation/expiry UX, and audit leaked-link scenarios.
 - [ ] Independent cryptographic/security assessment, dependency and supply-chain
       review, binary integrity and protected release process.
 - [ ] Confirm the upstream Java source, Nintendo-style assets, and bundled font
       can legally be redistributed in the intended form. Attribution alone
       does not grant distribution rights.
 - [ ] Owner confirms write access and branch protection/rulesets in GitHub.
-- [ ] Full latest CI green including visual screenshot inspection, PDF pages,
-      Unicode, browser consoles and both non-production and legacy code paths.
+- [x] CI green on latest integrated code: native MLS, Rust, legacy,
+      original browser/PDF, release verification, and original DS OpenMLS
+      through both HTTP loopback and a real self-signed HTTPS/WSS test proxy.
+- [ ] Independent manual review on real mobile/desktop devices, including
+      accessibility, browser consoles, network failure and PDF print output.
 - [ ] Reproducible builds with reviewed pinned lockfiles; verify binary on
       supported platforms, and run manual accessibility/device tests.
-- [ ] Clearly marked security notices and realistic user-facing privacy claims.
+- [x] Document local-only mode, strict public HTTPS origin, TLS-terminating
+      Caddy configuration, local systemd isolation, WSS, original UI and
+      explicit recovery limits in deploy/README.md.
+- [ ] Complete external penetration test and verified user-facing privacy/
+      security review before the public production release.
 
 ## Cut procedure (only after all blockers close)
 
