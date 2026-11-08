@@ -42,7 +42,7 @@ This deliberately prioritizes avoiding stale-epoch sends over seamless reconnect
 
 ## Separation and security limits
 
-**No changes to the current browser's cryptography have been made by this MLS laboratory.** The browser still uses experimental AES-256-GCM with an independently shared key plus ephemeral P-256 signatures; it does **not** negotiate MLS epochs. The relay now **also** accepts the opaque MLS transport framing v3, while leaving browser protocol v2 untouched. It does not parse or validate OpenMLS protocol contents. This is a transport test, not a deployed browser MLS client.
+**Browser integration status (November 2026):** The original PictoRust browser at `/` still uses experimental AES-256-GCM with an independently shared key plus ephemeral P-256 signatures; it does **not** negotiate MLS epochs. A new explicitly separate experimental browser at `/mls` now compiles the same Rust OpenMLS client to WebAssembly and has a successful real two-Chromium-peer test covering KeyPackage, verified owner, Welcome, encrypted application message, epoch advance and removal. The source is in `mls-web/` and `server/public/mls.*`. This is **not** equivalent to shipping MLS inside the original DS interface, nor production readiness. The relay now **also** accepts the opaque MLS transport framing v3, while leaving browser protocol v2 untouched. It does not parse or validate OpenMLS protocol contents. This is a transport test, not a deployed browser MLS client.
 
 Production prerequisites:
 
@@ -67,3 +67,40 @@ A WebSocket binary frame has one version byte `0x03`, followed by a one-byte kin
 The relay only enforces an allowed kind and total 3–16384 bytes; there is **no** authenticated MLS group routing or verified membership in the server. All messages still broadcast to currently connected holders of the bearer room capability. MLS validation and secret handling **must** remain on client devices. KeyPackage discovery, specific Welcome targeting, offline recovery, ordering, and durable group identities are not implemented. The v2 browser is not upgraded and may ignore v3 messages.
 
 A passing MLS test proves only these specific integration flows, **not end-to-end security of the shipping browser application**.
+
+## Browser WASM integration and group access policy
+
+From the repository root:
+
+```sh
+cargo install wasm-pack --version 0.13.1 --locked
+wasm-pack build mls-web --target web --release --out-dir pkg
+cd server
+PICTOCHAT_RELAY_SECRET="$(openssl rand -hex 32)" cargo run
+# Open http://127.0.0.1:8787/mls on the same host.
+```
+
+The [browser MLS GitHub workflow](../.github/workflows/pictorust-browser-mls.yml)
+compiles the real WASM, starts the Rust relay, and tests two independent
+Chromium browser pages. The exported screenshots are redacted to keep room
+admission tokens and Welcome material out of test artifacts.
+
+**Membership policy:** A group owner may add an externally fingerprint-verified
+single-use KeyPackage or remove a member by its current leaf index. A joiner
+must enter and externally verify the owner's Ed25519 signature key before
+using the room. Both local add/remove and incoming authenticated MLS Commits
+are checked against the pinned owner key **in Rust**, not only in HTML.
+
+**Unresolved release-critical controls:**
+- Joining currently uses manual out-of-band Welcome and ratchet tree delivery.
+  There is no server-backed authenticated identity directory or automatic
+  offline catch-up.
+- Each room still shares its bearer admission token. MLS removal revokes
+  *cryptographic membership* after applying the epoch-changing Commit but
+  **does not revoke relay socket admission**, so an evicted peer retaining
+  that token could still cause traffic or denial of service.
+- A dropped WebSocket fails closed and requires a verified new Welcome; no
+  zero-data-loss reconnection or persistent MLS key store is implemented.
+- The new browser chat is a separate MVP page. The original DS-themed page
+  still uses v2 and will require UI convergence before the final release.
+- A successful test is not an independent cryptographic audit.
