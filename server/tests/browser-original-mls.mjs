@@ -52,6 +52,10 @@ try{
  await alice.locator("#send").click();
  await bob.locator("#messages").getByText("OpenMLS Original ÄÖÜ ğışç 😊").waitFor({timeout:12000});
  // Use the same original touch keyboard and original drawing canvas.
+ // Independently prove the MLS reverse direction before testing drawn payloads.
+ await bob.locator("#text").fill("MLS Rückkanal Bob nach Alice");
+ await bob.locator("#send").click();
+ await alice.locator("#messages").getByText("MLS Rückkanal Bob nach Alice").waitFor({timeout:12000});
  await bob.locator("#keyboard-mode").click();
  await bob.locator('#international-keys button[data-char="ğ"]').click();
  await bob.locator("#text").fill("Antwort ");
