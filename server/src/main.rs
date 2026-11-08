@@ -559,10 +559,19 @@ async fn connect(
     let time_to_live = temporary_room_deadline(&room_id)
         .map(|deadline| Duration::from_secs(deadline.saturating_sub(unix_seconds())));
     Ok(ws.protocols(["picto.v1"]).max_message_size(MAX_FRAME_BYTES).max_frame_size(MAX_FRAME_BYTES)
-        .on_upgrade(move |socket| session(socket, room, receiver, permit, room_permit, time_to_live, revoked, public_tls_mode())))
+        .on_upgrade(move |socket| session(socket, room, receiver, permit, room_permit, SessionPolicy {
+            time_to_live, revocation: revoked, require_mls_v3: public_tls_mode()
+        })))
 }
 
-async fn session(socket: WebSocket, room: Arc<pictochat_relay::Room>, mut receiver: tokio::sync::broadcast::Receiver<Vec<u8>>, _permit: OwnedSemaphorePermit, _room_permit: OwnedSemaphorePermit, time_to_live: Option<Duration>, revocation: Option<watch::Receiver<bool>>, require_mls_v3: bool) {
+struct SessionPolicy {
+    time_to_live: Option<Duration>,
+    revocation: Option<watch::Receiver<bool>>,
+    require_mls_v3: bool,
+}
+
+async fn session(socket: WebSocket, room: Arc<pictochat_relay::Room>, mut receiver: tokio::sync::broadcast::Receiver<Vec<u8>>, _permit: OwnedSemaphorePermit, _room_permit: OwnedSemaphorePermit, policy: SessionPolicy) {
+    let SessionPolicy { time_to_live, revocation, require_mls_v3 } = policy;
     let (mut outgoing, mut incoming) = socket.split();
     let mut quota = MessageQuota::new();
     // Not even an already connected peer may extend a temporary room past expiry.
