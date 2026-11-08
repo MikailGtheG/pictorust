@@ -148,6 +148,12 @@ $("join").addEventListener("click",async()=>{
     const invite=JSON.parse($("welcome").value);
     if(invite.v!==1 || typeof invite.welcome!=="string" || typeof invite.tree!=="string")
       throw Error("Welcome-Format ungültig");
+    if(!/^[0-9a-f]{32}$/.test(invite.roomId) || !/^[0-9a-f]{64}$/.test(invite.token))
+      throw Error("Einladung ohne eigenes Geräte-Zugangstoken");
+    if($("room").value.trim() && $("room").value.trim()!==invite.roomId)
+      throw Error("Einladung ist für einen anderen Raum");
+    $("room").value=invite.roomId;
+    $("token").value=invite.token;
     const welcome=fromBase64(invite.welcome), tree=fromBase64(invite.tree);
     if(welcome.length>MAX_WIRE || tree.length>MAX_WIRE)throw Error("Einladung zu groß");
     client.accept_welcome(welcome,tree);
@@ -173,11 +179,24 @@ $("admit").addEventListener("click",async()=>{
     const expected=$("verified-fingerprint").value.trim().toLowerCase();
     if(!/^[0-9a-f]{64}$/.test(expected) || await sha256(packageBytes)!==expected)
       throw Error("Verifizierter KeyPackage-Fingerprint stimmt nicht überein");
+    const previous=new Set(client.members().map(member=>member.signatureKeyHex));
     const [commit,welcome,tree]=client.add_member(packageBytes);
     changedEpoch=true;
+    const member=client.members().find(item=>!previous.has(item.signatureKeyHex));
+    if(!member)throw Error("Neues MLS-Mitglied nicht eindeutig zugeordnet");
+    const {room,token}=readCredentials();
+    const response=await fetch(`/mls/invite/${room}/${member.leaf}`,{
+      method:"POST",cache:"no-store",headers:{Authorization:"Bearer "+token}
+    });
+    if(!response.ok)throw Error("Individueller Relay-Zugang nicht erstellt: "+response.status);
+    const admission=await response.json();
+    if(!/^[0-9a-f]{64}$/.test(admission.token))throw Error("Ungültiger Geräte-Zugang");
     // Local MLS state already advanced. If relay publication fails, fail closed.
     transmit(commit);
-    $("issued-welcome").value=JSON.stringify({v:1,welcome:base64(welcome),tree:base64(tree)});
+    $("issued-welcome").value=JSON.stringify({
+      v:1,roomId:room,token:admission.token,
+      welcome:base64(welcome),tree:base64(tree)
+    });
     $("invite-package").value="";
     $("verified-fingerprint").value="";
     roster();
@@ -192,6 +211,11 @@ $("remove").addEventListener("click",async()=>{
     const commit=client.remove_member(leaf);
     changedEpoch=true;
     transmit(commit);
+    const {room,token}=readCredentials();
+    const result=await fetch(`/mls/revoke/${room}/${leaf}`,{
+      method:"POST",cache:"no-store",headers:{Authorization:"Bearer "+token}
+    });
+    if(!result.ok)throw Error("MLS entfernt, aber Relay-Zugang nicht widerrufen: "+result.status);
     roster();
   }catch(e){if(changedEpoch)client?.mark_transport_interrupted();$("send").disabled=!client?.synchronized();message("Ausschluss fehlgeschlagen: "+e.message);}
 });
