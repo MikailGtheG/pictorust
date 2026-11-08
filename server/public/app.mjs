@@ -2,6 +2,7 @@ import { importRoomKey, encryptPacket, decryptPacket, ReplayGuard } from "./cryp
 import { createSessionIdentity, signMessage, verifyMessage, parseTrustedFingerprints } from "./identity.mjs";
 import { randomRoomId, sanitizeNickname, validateDraft } from "./session.mjs";
 import { preparePictoRustPrint } from "./pictorust-export.mjs";
+// @ts-ignore: The browser MLS adapter is served by Rust, not the TS build.
 import { createMlsSession, consumeMlsLink } from "/mls/session.mjs";
 "use strict";
 const $=id=>document.getElementById(id);
@@ -353,7 +354,7 @@ window.addEventListener("beforeunload",closeActive);
 if(!legacyMode){
   // No new visible controls, no changes to the sprite stage or keyboard layout.
   // Legacy warnings describe a transport that this page no longer uses.
-  for(const note of document.querySelectorAll(".warning")){
+  for(const note of Array.from(document.querySelectorAll(".warning"))){
     if(note.textContent.includes("KLASSISCHER MODUS") ||
        note.textContent.includes("Zum neuen OpenMLS-WASM"))note.hidden=true;
   }
@@ -367,7 +368,7 @@ if(!legacyMode){
     const invite=consumeMlsLink();
     if(invite){
       room.value=invite.room;
-      document.querySelector('[data-room-letter="'+invite.letter+'"]')?.click();
+      document.querySelector('[data-room-letter="'+invite.letter+'"]')?.dispatchEvent(new MouseEvent("click",{bubbles:true}));
       setStatus("Einladung erkannt. MLS-Gruppenbeitritt wird vorbereitet …");
       mls=createMlsHooks();
       mls.join(invite).catch(e=>{
