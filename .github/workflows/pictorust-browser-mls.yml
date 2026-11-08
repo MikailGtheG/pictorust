@@ -68,7 +68,7 @@ jobs:
           relay_pid=$!
           trap 'kill "$relay_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 45); do
-            if curl -fsS http://127.0.0.1:8787/mls/pkg/pictorust_mls_web.js >/dev/null; then
+            if curl -fsS http://127.0.0.1:8787/mls/healthz >/dev/null; then
               node tests/browser-mls.mjs
               exit 0
             fi
@@ -82,6 +82,7 @@ jobs:
           name: pictorust-browser-mls-${{ github.run_id }}
           path: |
             server/screenshots/mls/*.png
+            server/screenshots/mls/*.pdf
             server/screenshots/mls/relay.log
           retention-days: 10
           if-no-files-found: warn
