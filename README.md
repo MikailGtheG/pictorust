@@ -14,6 +14,22 @@ and [real Chromium screenshot workflow](.github/workflows/pictochat-browser-scre
 before judging readiness. The binary is deliberately not published while
 upstream asset redistribution terms and the browser MLS security gates remain open.
 
+## Browser OpenMLS group integration
+
+The [new experimental MLS browser](server/public/mls.html) is available at
+`http://127.0.0.1:8787/mls` **after building** `mls-web/` with
+`wasm-pack build mls-web --target web --release --out-dir pkg` and running the
+local Rust relay. This uses the same OpenMLS client code compiled to WebAssembly.
+Its independent [Chromium integration workflow](.github/workflows/pictorust-browser-mls.yml)
+builds WASM and verifies real two-peer onboarding, encrypted text, owner policy,
+member removal and new epochs. [Detailed setup and limitations](mls-lab/README.md).
+
+The current original DS-themed view at `/` still uses experimental PSK v2;
+the new MLS user interface is separate. **Do not claim a public secure-messenger
+release yet:** per-member relay admission revocation, authenticated invitation
+delivery, recoverable offline state, independent security review and asset
+redistribution rights remain open.
+
 ## Visual verification
 
 The screenshot and PDF integration workflow renders a real two-peer browser session with the original DS assets, Unicode and drawings, then checks print pagination at A4 dimensions. Its review artifacts contain:
