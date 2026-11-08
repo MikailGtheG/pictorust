@@ -14,36 +14,38 @@ and [real Chromium screenshot workflow](.github/workflows/pictochat-browser-scre
 before judging readiness. The binary is deliberately not published while
 upstream asset redistribution terms and the browser MLS security gates remain open.
 
-## Browser OpenMLS group integration
+## OpenMLS in the original Nintendo DS interface
 
-The [new experimental MLS browser](server/public/mls.html) is available at
-`http://127.0.0.1:8787/mls` **after building** `mls-web/` with
-`wasm-pack build mls-web --target web --release --out-dir pkg` and running the
-local Rust relay. This uses the same OpenMLS client code compiled to WebAssembly.
-Its independent [Chromium integration workflow](.github/workflows/pictorust-browser-mls.yml)
-builds WASM and verifies real two-peer onboarding, encrypted text, owner policy,
-member removal and new epochs. [Detailed setup and limitations](mls-lab/README.md).
+Open `http://127.0.0.1:8787/` after building the WASM client. **The
+original `server/public/index.html` and every Nintendo DS sprite, keyboard
+hitbox, chat frame and print renderer are unchanged.** The default client
+on that page now uses the Rust OpenMLS WebAssembly adapter, and existing
+room/create/connect/invite/send controls. No MLS-specific UI was added.
+A local visual regression mode retains the prior experimental v2 transport
+under `/?legacy=1`; the public HTTPS server rejects v2 frames entirely.
 
-The current original DS-themed view at `/` still uses experimental PSK v2;
-the new MLS user interface is separate. **Do not claim a public secure-messenger
-release yet:** per-member relay admission revocation, authenticated invitation
-delivery, recoverable offline state, independent security review and asset
-redistribution rights remain open.
+A room owner selects A–E, creates a temporary room and copies the existing
+invite link. The link contains a random invitation secret and creator key
+in the URL **fragment** (never the HTTP path); a guest opens it, automatically
+gets a verified OpenMLS Welcome and an individual relay bearer, and uses the
+same original chat interface. Owner-only authenticated group changes and
+per-device relay revocation are enforced in the Rust/WASM clients and relay.
 
-## Unified local MLS backend (UI integration pending)
+**Limited connection recovery:** One transient guest disconnect can
+automatically renew membership while the owner is online. The guest proves
+its previous individual relay bearer, the owner removes the previous MLS
+member and revokes its token, then creates a fresh cryptographic Welcome.
+This is not durable session recovery across reloads, server restarts or long
+offline periods.
 
-The **same Rust relay process** now serves the original PictoRust page at
-`/`, the MLS group controller at `/mls`, the single-origin WebAssembly
-package, and the owner-authorized group admission/revocation endpoints.
-MLS encryption and signing keys **remain client-side**; the server never
-decrypts group messages. The experimental MLS controller remains separate
-from the original DS interface at `/`. An attempted replacement of the
-DS layout was reverted after design review. Integrating MLS into the
-**existing, pixel-accurate original UI** (including its text, sketches and
-PDF functions) is the next step; no alternative DS layout is approved.
+The [browser MLS integration workflow](.github/workflows/pictorust-browser-mls.yml)
+verifies a three-peer group, original DS keyboard/drawings/PDF and the
+live two-browser invite/recovery path, over both localhost HTTP and a
+real HTTPS/WSS test proxy. The [operational deployment guide](deploy/README.md)
+documents Caddy TLS termination, exact allowed Origin, a restricted systemd
+service and the remaining release blockers.
 
-For a consistent local development bundle on Linux (Rust, wasm-pack and
-OpenSSL required):
+For local testing on Linux with Rust, wasm-pack and OpenSSL:
 
 ```sh
 bash scripts/build-local-mls.sh
@@ -52,15 +54,16 @@ PICTOCHAT_RELAY_SECRET="$(openssl rand -hex 32)" \
 curl --fail http://127.0.0.1:8787/mls/healthz
 ```
 
-Open `http://127.0.0.1:8787/mls`. The bundle contains the relay executable
-and its generated JS/WASM assets with SHA-256 checksums and stays on the
-local machine; **it is not a publicly licensed release package**.
-`GET /mls/healthz` returns HTTP 503 until both required WASM assets are
-actually present.
+The original interface is at `/`; the separate `/mls` page is now only an
+engineering diagnostic view. `GET /mls/healthz` returns HTTP 503 until
+the required real WASM/JS files are present.
 
-This unifies transport/deployment but does not yet make the original `/` UI
-use MLS automatically. Production still requires reviewed identity recovery,
-offline Commit handling, safe invitation delivery, and asset licensing.
+**Not production security/a public release:** Invitation links are bearer
+capabilities and must be delivered through trusted channels. No persistent
+encrypted MLS device-state backup, offline missed-Commit catch-up, owner
+recovery, independently reviewed identity directory, independent security
+assessment or proven third-party asset distribution permission exists yet.
+A successful CI build does not substitute for those requirements.
 
 ## Visual verification
 
