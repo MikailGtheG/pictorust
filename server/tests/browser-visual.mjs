@@ -54,6 +54,28 @@ async function main() {
       assert.equal(await page.locator("#lobby-logo").evaluate(image => image.naturalWidth), 93);
     }
 
+    // Release design guard: MLS transport integration must NEVER replace the
+    // canonical DS page with a new chat layout, toolbar or alternate keyboard.
+    const canonicalUi = await alice.evaluate(() => ({
+      stage: !!document.querySelector("#picto > .top-screen") &&
+             !!document.querySelector("#picto > .bottom-screen"),
+      input: !!document.querySelector("#writing-board"),
+      sprites: !!document.querySelector("#room-letter") &&
+               !!document.querySelector("#connection-icon"),
+      originalKeyboard: document.querySelectorAll(
+        "#touch-keys button[data-original-hitbox]").length,
+      fiveRooms: Array.from(document.querySelectorAll(
+        "#lobby button[data-room-letter]")).map(el=>el.dataset.roomLetter).join(""),
+      noReplacement: !document.querySelector("#ds-stage") &&
+                     !document.querySelector("#mls-ds-keyboard"),
+    }));
+    assert.equal(canonicalUi.stage,true,"original two-screen DOM must remain intact");
+    assert.equal(canonicalUi.input,true,"original drawing board must remain intact");
+    assert.equal(canonicalUi.sprites,true,"original sprite headers must remain intact");
+    assert.equal(canonicalUi.originalKeyboard,50,"the exact 50 original keyboard hitboxes are immutable");
+    assert.equal(canonicalUi.fiveRooms,"ABCDE","all original room buttons must be present");
+    assert.equal(canonicalUi.noReplacement,true,"no alternative UI may silently replace canonical PictoRust");
+
     // Pixel-accurate geometry contract from the main-fork PIXI renderer.
     // Coordinates below are logical 256x384 DS pixels, not CSS approximations.
     await alice.waitForFunction(() => document.querySelectorAll("#touch-keys button[data-original-hitbox]").length === 50);
