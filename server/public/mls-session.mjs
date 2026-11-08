@@ -141,7 +141,7 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
     handlePending.busy=true;
     try{
       const response=await fetch("/mls/join/pending/"+room(),{
-        cache:"no-store",headers:auth()});
+        method:"POST",cache:"no-store",headers:auth()});
       if(!response.ok)throw Error("Einladungsabfrage "+response.status);
       const requests=await response.json();
       for(const request of requests){
