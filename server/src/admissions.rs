@@ -30,7 +30,7 @@ fn digest_token(token: &str) -> Option<[u8;32]> {
 
 impl MembershipAdmissions {
     pub fn mint(&self, room: &str, leaf: u32) -> Result<String,&'static str> {
-        if !crate::auth::valid_room_id(room) || leaf==0 { return Err("invalid member admission"); }
+        if !pictochat_relay::auth::valid_room_id(room) || leaf==0 { return Err("invalid member admission"); }
         let mut all=self.rooms.lock().map_err(|_|"admission lock poisoned")?;
         if !all.contains_key(room) && all.len()>=MAX_TOKEN_ROOMS {return Err("too many token rooms");}
         let entries=all.entry(room.to_owned()).or_default();
