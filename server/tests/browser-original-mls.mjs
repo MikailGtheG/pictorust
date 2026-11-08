@@ -3,11 +3,11 @@
 import assert from "node:assert/strict";
 import {chromium} from "playwright";
 import {mkdir} from "node:fs/promises";
-const origin="http://127.0.0.1:8787";
+const origin=process.env.PICTORUST_E2E_ORIGIN||"http://127.0.0.1:8787";
 await mkdir("screenshots/mls", {recursive:true});
 const browser=await chromium.launch({headless:true,args:["--no-sandbox"]});
 try{
- const ctx=await browser.newContext({permissions:["clipboard-read","clipboard-write"],
+ const ctx=await browser.newContext({ignoreHTTPSErrors:true,permissions:["clipboard-read","clipboard-write"],
    viewport:{width:1200,height:1000}});
  const alice=await ctx.newPage(), bob=await ctx.newPage();
  const failures=[];
