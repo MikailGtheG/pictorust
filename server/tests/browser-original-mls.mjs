@@ -10,6 +10,18 @@ try{
  const ctx=await browser.newContext({ignoreHTTPSErrors:true,permissions:["clipboard-read","clipboard-write"],
    viewport:{width:1200,height:1000}});
  const alice=await ctx.newPage(), bob=await ctx.newPage();
+ await bob.addInitScript(()=>{
+   const Native=window.WebSocket;
+   window.__pictorustTestSockets=[];
+   window.__pictorustTestProtocols=[];
+   window.WebSocket=class extends Native {
+     constructor(url,protocols){
+       super(url,protocols);
+       window.__pictorustTestSockets.push(this);
+       window.__pictorustTestProtocols.push([...protocols]);
+     }
+   };
+ });
  const failures=[];
  for(const p of [alice,bob])p.on("pageerror",e=>failures.push(e.message));
  await alice.goto(origin,{waitUntil:"networkidle"});
@@ -90,6 +102,33 @@ try{
  await alice.waitForFunction(()=>document.querySelectorAll("#pixel-print .pixel-page").length>=1);
  await alice.locator("#picto").screenshot({path:"screenshots/mls/mls-original-ui-authenticated.png",
    animations:"disabled"});
+ // Simulate a genuine lost transport while the owner remains online.
+ // Rejoin MUST rotate the guest's MLS identity, remove its old leaf,
+ // revoke its old WebSocket bearer and verify the owner again.
+ const oldBearer=await bob.evaluate(()=>window.__pictorustTestProtocols[0][1]);
+ assert.match(oldBearer,/^auth\\.[0-9a-f]{64}$/);
+ await bob.evaluate(()=>window.__pictorustTestSockets[0].close(4001,"transport-interruption"));
+ await bob.waitForFunction(()=>document.querySelector("#status").textContent.includes("MLS wiederverbunden"),
+   null,{timeout:45000});
+ const newBearer=await bob.evaluate(()=>window.__pictorustTestProtocols.at(-1)[1]);
+ assert.match(newBearer,/^auth\\.[0-9a-f]{64}$/);
+ assert.notEqual(newBearer,oldBearer,"a rejoin must receive a fresh relay bearer");
+ const revokedRejected=await bob.evaluate(({room,oldBearer})=>new Promise(resolve=>{
+   const url=(location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/"+room;
+   const socket=new WebSocket(url,["picto.v1",oldBearer]);
+   const timeout=setTimeout(()=>{socket.close();resolve(false);},5000);
+   socket.onerror=()=>{clearTimeout(timeout);resolve(true);};
+   socket.onopen=()=>{clearTimeout(timeout);socket.close();resolve(false);};
+ }),{room:ownerRoom,oldBearer});
+ assert.equal(revokedRejected,true,"old member token must be revoked during rejoin");
+ await alice.locator("#text").fill("Wiederherstellung mit neuer MLS-Epoche");
+ await alice.locator("#send").click();
+ await bob.locator("#messages").getByText("Wiederherstellung mit neuer MLS-Epoche")
+   .waitFor({timeout:12000});
+ await bob.locator("#text").fill("Antwort nach sicherer Wiederverbindung");
+ await bob.locator("#send").click();
+ await alice.locator("#messages").getByText("Antwort nach sicherer Wiederverbindung")
+   .waitFor({timeout:12000});
  assert.deepEqual(failures,[]);
- console.log("OpenMLS behind unchanged original DS UI: invitation, text, drawings and PDF passed");
+ console.log("OpenMLS behind unchanged original DS UI: invitation, text, drawings, PDF and authenticated fresh-key recovery passed");
 }finally{await browser.close();}
