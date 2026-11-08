@@ -60,6 +60,9 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
     if(pendingPoll)clearInterval(pendingPoll);
     ws?.close();
     onDisconnect?.();
+    // Preserve the specific verified-transport failure instead of replacing it
+    // immediately with a generic "disconnected" message.
+    status(text);
   }
   async function connect(capability){
     if(ws)throw Error("Bereits verbunden");
