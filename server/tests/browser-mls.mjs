@@ -45,6 +45,10 @@ try {
   await alice.locator("#message").fill("MLS: Hallo ÄÖÜ ğışç 😊");
   await alice.locator("#send").click();
   await bob.locator("#feed").getByText("MLS: Hallo ÄÖÜ ğışç 😊").waitFor({timeout:15000});
+  // Never leak even synthetic admission capabilities in published screenshots.
+  for(const page of [alice,bob]){
+    await page.addStyleTag({content:"#token,#issued-welcome,#welcome,#own-package,#invite-package{filter:blur(14px)}"});
+  }
   await alice.screenshot({path:`${dir}/mls-alice-group.png`,fullPage:true});
   await bob.screenshot({path:`${dir}/mls-bob-group.png`,fullPage:true});
   const options=await alice.locator("#remove-leaf option").count();
