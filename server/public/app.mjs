@@ -2,6 +2,7 @@ import { importRoomKey, encryptPacket, decryptPacket, ReplayGuard } from "./cryp
 import { createSessionIdentity, signMessage, verifyMessage, parseTrustedFingerprints } from "./identity.mjs";
 import { randomRoomId, sanitizeNickname, validateDraft } from "./session.mjs";
 import { preparePictoRustPrint } from "./pictorust-export.mjs";
+import { createMlsSession, consumeMlsLink } from "/mls/session.mjs";
 "use strict";
 const $=id=>document.getElementById(id);
 const room=$("room"),token=$("token"),status=$("status"),messages=$("messages");
@@ -10,6 +11,8 @@ const volatileMessages=[];
 function clearLocalMessages(){messages.replaceChildren();localExportPages.replaceChildren();volatileMessages.length=0;lastReceivedData=null;}
 const canvas=$("drawing"),ctx=canvas.getContext("2d"),encoder=new TextEncoder(),decoder=new TextDecoder("utf-8",{fatal:true});
 let socket=null,strokes=[],current=null,roomKey=null,replayGuard=null,sessionIdentity=null,trustedPeers=null;
+const legacyMode=new URL(location.href).searchParams.get("legacy")==="1";
+let mls=null;
 const MAX_BYTES=16384,MAX_POINTS=1200;
 let totalPoints=0;
 let selectedPenWidth=2.5;
@@ -51,9 +54,23 @@ document.getElementById("copy-last").addEventListener("click",()=>{
  current=null;redraw();
 });
 document.getElementById("clear-chat").addEventListener("click",clearLocalMessages);
-document.getElementById("leave-room").addEventListener("click",()=>socket?.close());
-document.getElementById("exit-internal").addEventListener("click",()=>socket?.close());
+document.getElementById("leave-room").addEventListener("click",closeActive);
+document.getElementById("exit-internal").addEventListener("click",closeActive);
 
+function closeActive(){
+ if(mls){mls.close();mls=null;enabled(false);clearLocalMessages();setStatus("MLS-Sitzung beendet");}
+ else socket?.close();
+}
+function createMlsHooks(){
+ return createMlsSession({
+   name:()=>sanitizeNickname($("nickname").value),
+   room:()=>room.value.trim(),token:()=>token.value.trim(),
+   onStatus:setStatus,
+   onMessage:(data)=>{if(valid(data))render(data,data.nickname+" · MLS");},
+   onReady:()=>{enabled(true);setStatus("Verbunden · OpenMLS Ende-zu-Ende");},
+   onDisconnect:()=>{enabled(false);setStatus("MLS unterbrochen · erneute Einladung erforderlich");}
+ });
+}
 room.value=randomRoomId();
 $("new-room").addEventListener("click",async()=>{
  if(socket)return;
@@ -70,6 +87,14 @@ $("new-room").addEventListener("click",async()=>{
  finally{$("new-room").disabled=false;}
 });
 $("copy-invite").addEventListener("click",async()=>{
+ if(!legacyMode){
+  try{
+   if(!mls?.active())throw Error("Zuerst einen Raum erstellen und verbinden");
+   await navigator.clipboard.writeText(mls.invitationUrl(selectedRoomLetter));
+   setStatus("Privaten Einladungslink kopiert. Nur an gewünschte Teilnehmer weitergeben.");
+  }catch(e){setStatus(e.message);}
+  return;
+ }
  if(!/^[0-9a-f]{32}$/.test(room.value)||!/^[0-9a-f]{64}$/.test(token.value)){
   setStatus("Zuerst Raum und Zugangstoken erstellen");return;
  }
@@ -168,6 +193,7 @@ document.querySelectorAll("#touch-keys [data-char], #international-keys [data-ch
  });
 });
 async function renewIdentity(){
+ if(!legacyMode){$("connect").disabled=false;return;}
  if(socket)return;
  $("connect").disabled=true;
  $("own-fingerprint").textContent="Wird erzeugt …";
@@ -188,7 +214,7 @@ $("generate-key").addEventListener("click",()=>{
 $("show-key").addEventListener("click",()=>{
  const field=$("e2ee-key");field.type=field.type==="password"?"text":"password";
 });
-const enabled=on=>{$("send").disabled=!on;$("disconnect").disabled=!on;$("connect").disabled=on||!sessionIdentity;room.disabled=on;token.disabled=on;$("new-identity").disabled=on;$("new-room").disabled=on;$("trusted-fingerprints").disabled=on;lobby.hidden=on;if(on)securityPanel.removeAttribute("open");else securityPanel.setAttribute("open","");};
+const enabled=on=>{$("send").disabled=!on;$("disconnect").disabled=!on;$("connect").disabled=on||(legacyMode&&!sessionIdentity);room.disabled=on;token.disabled=on;$("new-identity").disabled=on;$("new-room").disabled=on;$("trusted-fingerprints").disabled=on;lobby.hidden=on;if(on)securityPanel.removeAttribute("open");else securityPanel.setAttribute("open","");};
 function xy(e){
  const b=canvas.getBoundingClientRect();
  return [Math.max(0,Math.min(512,Math.round((e.clientX-b.left)*512/b.width))),
@@ -242,6 +268,18 @@ function valid(data){
   sanitizeNickname(data.nickname)===data.nickname;
 }
 $("connect").addEventListener("click",async()=>{
+ if(!legacyMode){
+  if(mls?.active())return;
+  if(!/^[0-9a-f]{32}$/.test(room.value.trim())||!/^[0-9a-f]{64}$/.test(token.value.trim())){
+   setStatus("Zuerst mit 'Raum + Einladung erstellen' einen privaten Raum anlegen");
+   return;
+  }
+  mls=createMlsHooks();
+  $("connect").disabled=true;setStatus("OpenMLS wird gestartet …");
+  try{await mls.startOwner();}
+  catch(e){mls?.close();mls=null;enabled(false);setStatus("MLS-Start fehlgeschlagen: "+e.message);}
+  return;
+ }
  const id=room.value.trim(),cap=token.value.trim(),secret=$("e2ee-key").value.trim();
  if(!/^[0-9a-f]{32}$/.test(id)||!/^[0-9a-f]{64}$/.test(cap)){setStatus("Ungültige Raum-ID oder Zugangstoken");return;}
  if(socket||!sessionIdentity)return;
@@ -273,8 +311,21 @@ $("connect").addEventListener("click",async()=>{
   token.value="";$("e2ee-key").value="";$("trusted-fingerprints").value="";
   enabled(false);setStatus("Sitzung beendet – lokale Nachrichten und Schlüssel verworfen");renewIdentity();}};
 });
-$("disconnect").addEventListener("click",()=>socket?.close());
+$("disconnect").addEventListener("click",closeActive);
 $("send").addEventListener("click",async()=>{
+ if(!legacyMode){
+  if(!mls?.active())return;
+  const draft={v:1,text:$("text").value,
+   nickname:sanitizeNickname($("nickname").value),
+   strokes:strokes.map(s=>s.map(p=>[...p]))};
+  if(!draft.text.trim()&&!draft.strokes.length)return;
+  try{
+   if(!valid(draft))throw Error("Zeichnung oder Text ungültig");
+   mls.send(draft);
+   $("text").value="";strokes=[];current=null;totalPoints=0;redraw();
+  }catch(e){setStatus("MLS-Senden fehlgeschlagen: "+e.message);}
+  return;
+ }
  if(!socket||socket.readyState!==WebSocket.OPEN||!roomKey)return;
  const active=socket,key=roomKey,identity=sessionIdentity;
  const data={v:1,text:$("text").value,nickname:sanitizeNickname($("nickname").value),strokes:strokes.map(s=>s.map(p=>[...p]))};
@@ -298,4 +349,26 @@ $("pdf").addEventListener("click",async()=>{
  finally{control.disabled=false;}
 });
 $("erase").addEventListener("click",clearLocalMessages);
-window.addEventListener("beforeunload",()=>socket?.close());
+window.addEventListener("beforeunload",closeActive);
+if(!legacyMode){
+  // No new visible controls, no changes to the sprite stage or keyboard layout.
+  for(const id of ["e2ee-key","own-fingerprint","trusted-fingerprints"]){
+    const node=$(id);if(node)node.closest(".settings > div")?.setAttribute("hidden","");
+  }
+  for(const id of ["generate-key","show-key","new-identity"]){
+    const node=$(id);if(node)node.hidden=true;
+  }
+  try{
+    const invite=consumeMlsLink();
+    if(invite){
+      room.value=invite.room;
+      document.querySelector('[data-room-letter="'+invite.letter+'"]')?.click();
+      setStatus("Einladung erkannt. MLS-Gruppenbeitritt wird vorbereitet …");
+      mls=createMlsHooks();
+      mls.join(invite).catch(e=>{
+        mls?.close();mls=null;enabled(false);
+        setStatus("MLS-Beitritt fehlgeschlagen: "+e.message);
+      });
+    }
+  }catch(e){setStatus("Einladungslink ungültig: "+e.message);}
+}
