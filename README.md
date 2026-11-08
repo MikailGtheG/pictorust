@@ -11,18 +11,18 @@
 ## Wie alles begann
 
 Die Idee zu **PictoRust** begann nicht mit einem Businessplan, sondern mit
-einem Link von **Alperen**. Er zeigte uns **picto.app** – und sofort war
+einem Link von **Alperen**. Er zeigte mir **picto.app** – und sofort war
 dieses Nintendo-DS-PictoChat-Gefühl wieder da: kleine Räume, Zeichnungen
 und ein Chat, der einfach Spaß macht.
 
-Aus Neugier wurde ein technischer Code-Review. Dabei haben wir uns Fragen
+Aus Neugier wurde ein technischer Code-Review. Dabei stellten wir uns Fragen
 gestellt, die wir bei einem privaten Messenger unbedingt beantwortet haben
 wollten: **Wer kann Nachrichten mitlesen? Wo endet die Verschlüsselung?
 Welche Informationen verarbeitet der Server?** Die vorgefundene
 Java-basierte Architektur und die aus unserer Sicht nicht ausreichend
 nachvollziehbaren Datenschutz- und Verschlüsselungsgarantien waren der
 Ausgangspunkt unserer Diskussion. Gerade die Möglichkeit, dass ein Server
-Chats mitsehen könnte, wollten wir für *unser eigenes Projekt* technisch
+Chats mitlesen könnte, wollten wir für *unser eigenes Projekt* technisch
 ausschließen.
 
 **Wichtig:** Das beschreibt unsere damaligen Bedenken und Motivation –
