@@ -61,6 +61,7 @@ jobs:
         working-directory: server
         env:
           PICTOCHAT_RELAY_SECRET: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+          PICTORUST_PUBLIC_ORIGIN: 'https://localhost:9443'
         run: |
           set -euo pipefail
           mkdir -p screenshots/mls
@@ -71,7 +72,27 @@ jobs:
             if curl -fsS http://127.0.0.1:8787/mls/healthz >/dev/null; then
               node tests/browser-mls.mjs
               node tests/browser-original-mls.mjs
-              exit 0
+              # Real HTTPS/WSS smoke using a short-lived self-signed test
+              # certificate; the production TLS terminator is Caddy.
+              openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+                -keyout "$RUNNER_TEMP/pictorust-tls.key" \
+                -out "$RUNNER_TEMP/pictorust-tls.crt" \
+                -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost" \
+                >/dev/null 2>&1
+              PICTORUST_TEST_TLS_KEY="$RUNNER_TEMP/pictorust-tls.key" \
+              PICTORUST_TEST_TLS_CERT="$RUNNER_TEMP/pictorust-tls.crt" \
+                node tests/https-wss-proxy.mjs >screenshots/mls/tls-proxy.log 2>&1 &
+              tls_pid=$!
+              trap 'kill "$tls_pid" "$relay_pid" 2>/dev/null || true' EXIT
+              for tls_attempt in $(seq 1 30); do
+                if curl -kfsS https://localhost:9443/mls/healthz >/dev/null; then
+                  PICTORUST_E2E_ORIGIN=https://localhost:9443 node tests/browser-original-mls.mjs
+                  exit 0
+                fi
+                sleep 1
+              done
+              cat screenshots/mls/tls-proxy.log
+              exit 1
             fi
             sleep 1
           done
@@ -85,5 +106,6 @@ jobs:
             server/screenshots/mls/*.png
             server/screenshots/mls/*.pdf
             server/screenshots/mls/relay.log
+            server/screenshots/mls/tls-proxy.log
           retention-days: 10
           if-no-files-found: warn
