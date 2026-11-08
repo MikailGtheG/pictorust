@@ -20,18 +20,24 @@ The `PictoRust release candidate verification` GitHub Action builds the Rust
 relay in release mode, runs Rust unit tests, launches the actual executable,
 checks `GET /healthz` and the UI, ensures it cannot listen on a different
 loopback IP, and publishes a SHA-256 verification report (not a distributable
-binary). The separate browser visual workflow checks the original keyboard
+binary). The new browser OpenMLS workflow tests two actual WASM clients with encrypted send and removal; the separate browser visual workflow checks the original keyboard
 hitboxes, two peers, sketches, Unicode, and actual one- and two-page A4 PDFs.
 
 A successful GitHub action is necessary but not sufficient for a release.
 
 ## Critical blockers for a public/production release
 
-- [ ] Ship and independently test a proper **client-side** OpenMLS integration.
-      A v3-framed relay packet is NOT authenticated membership; current browser
-      uses the older experimental v2 PSK/session-key model.
-- [ ] Establish authenticated membership onboarding, device removal,
-      authorization of Commits, and fail-closed reconnect/rejoin behavior.
+- [x] Build and test a **separate** OpenMLS browser WASM proof: real two-browser
+      encrypted group chat, external KeyPackage fingerprint, owner verification,
+      Welcome join, group epoch rotation and removal (CI-tested).
+- [ ] Integrate that audited MLS path into the actual original DS interface,
+      retire the v2 PSK default, and test multiple client/platform combinations.
+- [x] Enforce local verified-owner policy in Rust for local add/remove and
+      MLS-authenticated incoming membership Commits; fail closed on disconnect.
+- [ ] Implement per-device relay authorization, revoke sockets/admission tokens
+      for evicted members, and confirm safe reconnect with missed Commits.
+- [ ] Replace manual out-of-band Welcome exchange with authenticated discovery
+      and delivery that does not expose private MLS state or invites.
 - [ ] Independent cryptographic/security assessment, dependency and supply-chain
       review, binary integrity and protected release process.
 - [ ] Confirm the upstream Java source, Nintendo-style assets, and bundled font
