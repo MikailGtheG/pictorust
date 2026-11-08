@@ -17,6 +17,7 @@ struct Request {
     key_package: String,
     created: Instant,
     result: Option<String>,
+    delivered: bool,
 }
 
 struct Invitation {
@@ -52,7 +53,7 @@ impl InviteBroker {
         if invite.requests.len()>=MAX_PENDING {return Err("pending join capacity");}
         let mut bytes=[0u8;16];OsRng.fill_bytes(&mut bytes);
         let id=hex::encode(bytes);
-        invite.requests.push(Request{id:id.clone(),key_package:key_package.into(),created:Instant::now(),result:None});
+        invite.requests.push(Request{id:id.clone(),key_package:key_package.into(),created:Instant::now(),result:None,delivered:false});
         Ok(id)
     }
 
@@ -60,7 +61,7 @@ impl InviteBroker {
         let Ok(mut rooms)=self.rooms.lock() else {return Vec::new()};
         let Some(invite)=rooms.get_mut(room) else {return Vec::new()};
         invite.requests.retain(|r|r.created.elapsed()<REQUEST_LIFETIME);
-        invite.requests.iter().filter(|r|r.result.is_none()).map(|r|(r.id.clone(),r.key_package.clone())).collect()
+        invite.requests.iter().filter(|r|!r.delivered && r.result.is_none()).map(|r|(r.id.clone(),r.key_package.clone())).collect()
     }
 
     pub fn complete(&self,room:&str,id:&str,result:&str)->Result<(),&'static str>{
@@ -69,7 +70,7 @@ impl InviteBroker {
         let invite=rooms.get_mut(room).ok_or("unknown invitation")?;
         let r=invite.requests.iter_mut().find(|r|r.id==id && r.created.elapsed()<REQUEST_LIFETIME)
             .ok_or("unknown request")?;
-        if r.result.is_some(){return Err("already completed");}
+        if r.delivered || r.result.is_some(){return Err("already completed");}
         r.result=Some(result.into());
         Ok(())
     }
@@ -82,7 +83,9 @@ impl InviteBroker {
         if invite.digest!=digest{return Err("bad invitation");}
         let r=invite.requests.iter_mut().find(|r|r.id==id && r.created.elapsed()<REQUEST_LIFETIME)
             .ok_or("expired request")?;
-        Ok(r.result.take())
+        let delivered=r.result.take();
+        if delivered.is_some(){r.delivered=true;}
+        Ok(delivered)
     }
 }
 fn valid_hex(s:&str,len:usize)->bool{s.len()==len && s.bytes().all(|b|b.is_ascii_hexdigit())}
@@ -104,5 +107,7 @@ mod tests{
         assert!(b.complete(room,&id,"duplicate").is_err());
         assert_eq!(b.result(room,&id,&secret).unwrap(),Some(r#"{"welcome":"AQID"}"#.into()));
         assert_eq!(b.result(room,&id,&secret).unwrap(),None);
+        assert_eq!(b.pending(room).len(),0,"a consumed Welcome must never reappear as a pending join");
+        assert!(b.complete(room,&id,"replay").is_err());
     }
 }
