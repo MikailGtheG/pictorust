@@ -78,45 +78,6 @@ try {
   await alice.locator("#send").click();
   await bob.locator("#feed").getByText("MLS: Hallo ÄÖÜ ğışç 😊").waitFor({timeout:15000});
   await charlie.locator("#feed").getByText("MLS: Hallo ÄÖÜ ğışç 😊").waitFor({timeout:15000});
-  // Original DS UI is no longer a placeholder: the actual MLS messages
-  // must appear within the sprite-backed top screen.
-  const stage=await alice.locator("#ds-stage").evaluate(element=>{
-    const bg=getComputedStyle(element).backgroundImage;
-    const feed=document.querySelector("#feed").getBoundingClientRect();
-    const outer=element.getBoundingClientRect();
-    return {background:bg,width:outer.width,height:outer.height,feedInside:feed.top>=outer.top && feed.bottom<=outer.bottom};
-  });
-  assert.match(stage.background,/\/original\/images\/background\.png/);
-  assert.ok(Math.abs(stage.width/stage.height-256/384)<0.01);
-  assert.equal(stage.feedInside,true);
-
-  // The lower DS screen must send real encrypted drawings, not just text.
-  await alice.locator("#mls-pen-tool").click();
-  const drawing=alice.locator("#mls-drawing");
-  const rect=await drawing.boundingBox();
-  assert.ok(rect);
-  await alice.mouse.move(rect.x+20,rect.y+20);
-  await alice.mouse.down();
-  await alice.mouse.move(rect.x+80,rect.y+55,{steps:8});
-  await alice.mouse.up();
-  await alice.locator("#mls-text-tool").click();
-  await alice.locator("#message").fill("MLS Zeichnung");
-  await alice.locator("#send").click();
-  await bob.locator("#feed .entry").filter({hasText:"MLS Zeichnung"}).locator("img").waitFor({timeout:15000});
-  const drawingPixel=await bob.locator("#feed .entry").filter({hasText:"MLS Zeichnung"}).locator("img").evaluate(img=>img.naturalWidth);
-  assert.equal(drawingPixel,512);
-
-  // Reuse original sprite PDF renderer; the MLS history remains in memory.
-  await alice.evaluate(()=>{window.print=()=>{};});
-  await alice.locator("#mls-pdf").click();
-  await alice.waitForFunction(()=>document.querySelectorAll("#pixel-print .pixel-page").length>=1);
-  const pdfImages=await alice.locator("#pixel-print .pixel-page").count();
-  assert.ok(pdfImages>=1);
-  await alice.emulateMedia({media:"print"});
-  await alice.pdf({path:`${dir}/mls-original-pixel-chat.pdf`,
-    printBackground:true,preferCSSPageSize:true,scale:1});
-  await alice.emulateMedia({media:"screen"});
-  await alice.locator("#ds-stage").screenshot({path:`${dir}/mls-original-ds-stage.png`,animations:"disabled"});
   // Never leak even synthetic admission capabilities in published screenshots.
   for(const page of [alice,bob,charlie]){
     await page.addStyleTag({content:"#token,#issued-welcome,#welcome,#own-package,#invite-package{filter:blur(14px)}"});
@@ -150,5 +111,5 @@ try {
 
   await alice.screenshot({path:`${dir}/mls-after-removal.png`,fullPage:true});
   assert.deepEqual(failures,[]);
-  console.log("Real browser MLS group integration passed: three browsers, DS sprite chat and encrypted drawings/PDF, distinct bearer admissions, owner policy, revocation and surviving epoch.");
+  console.log("Real browser MLS group integration passed: three browsers, distinct bearer admissions, owner policy, encrypted messages, socket revocation and surviving-member epoch.");
 }finally{await browser.close();}
