@@ -48,6 +48,12 @@ impl BrowserMlsClient {
         self.client.accept_welcome_wire(welcome, tree).map_err(failure)
     }
 
+    /// The browser MUST call this after a Welcome, before opening a socket.
+    /// expected is the out-of-band verified 32-byte Ed25519 public key.
+    pub fn pin_owner(&mut self, expected: &[u8]) -> Result<(), JsValue> {
+        self.client.pin_group_owner(expected).map_err(failure)
+    }
+
     pub fn send(&mut self, message: &[u8]) -> Result<Vec<u8>, JsValue> {
         self.client.send(message).map_err(failure)
     }
