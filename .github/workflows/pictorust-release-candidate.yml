@@ -1,0 +1,88 @@
+name: PictoRust release candidate verification
+
+on:
+  push:
+    branches:
+      - development/pictochat-modernization
+    paths:
+      - 'server/**'
+      - 'mls-lab/**'
+      - '.github/workflows/pictorust-release-candidate.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pictorust-rc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  candidate:
+    name: Linux local-only RC smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - name: Build and unit-test candidate
+        working-directory: server
+        run: |
+          set -euo pipefail
+          cargo test --all-targets
+          cargo build --release --bin pictochat-relay
+          test -x target/release/pictochat-relay
+      - name: Local-only executable smoke test
+        working-directory: server
+        env:
+          PICTOCHAT_RELAY_SECRET: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+        run: |
+          set -euo pipefail
+          mkdir -p rc-proof
+          target/release/pictochat-relay > rc-proof/relay.log 2>&1 &
+          relay_pid=$!
+          trap 'kill "$relay_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in $(seq 1 40); do
+            if curl -fsS --max-time 2 http://127.0.0.1:8787/healthz -o rc-proof/health.txt; then
+              ready=1; break
+            fi
+            sleep 1
+          done
+          test "$ready" -eq 1
+          test "$(cat rc-proof/health.txt)" = ok
+          curl -fsS --max-time 5 http://127.0.0.1:8787/ -o rc-proof/index.html
+          grep -q 'PictoRust' rc-proof/index.html
+          # The loopback-only security boundary must remain in place.
+          if curl -fsS --connect-timeout 2 --max-time 3 http://127.0.0.2:8787/healthz >/dev/null; then
+            echo 'Unexpected non-loopback service exposure' >&2
+            exit 1
+          fi
+          sha256sum target/release/pictochat-relay > rc-proof/relay.sha256
+          printf 'Candidate: 0.2.0-rc.1 (loopback testing only)\nCommit: %s\n' "${GITHUB_SHA}" > rc-proof/manifest.txt
+          echo 'Candidate local-only smoke test passed.'
+      - name: Publish verification report (no bundled third-party assets)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pictorust-rc-verification-${{ github.run_id }}
+          path: |
+            server/rc-proof/health.txt
+            server/rc-proof/relay.sha256
+            server/rc-proof/manifest.txt
+          retention-days: 7
+          if-no-files-found: error
+      - name: Candidate gate summary
+        run: |
+          {
+            echo '## PictoRust v0.2.0-rc.1 — internal local-only candidate'
+            echo ''
+            echo '- Compiled the release-mode Rust relay'
+            echo '- Passed Rust tests and real HTTP smoke test on 127.0.0.1'
+            echo '- Recorded SHA-256 and build commit for provenance'
+            echo '- NO public binary/release is published: the repo includes upstream code/assets with unverified redistribution terms'
+            echo '- Still requires real browser MLS integration, independent security review and owner-controlled repository access before public production release'
+          } >> "$GITHUB_STEP_SUMMARY"
