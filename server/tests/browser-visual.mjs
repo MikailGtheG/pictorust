@@ -280,6 +280,34 @@ async function main() {
     assert.equal(emojiRendersInColor.width,1024);
     assert.ok(emojiRendersInColor.warm>12,
       "colored emoji must survive native pixel compositing");
+    // Unicode grapheme regression: do not break combining accents, joined
+    // emoji families, or skin-tone sequences into independently spaced glyphs.
+    const complexUnicode = await alice.evaluate(async () => {
+      const text = "Cafe\u0301 👩🏽‍💻 👨‍👩‍👧‍👦";
+      const graphemes = Array.from(
+        new Intl.Segmenter("und",{granularity:"grapheme"}).segment(text),
+        part=>part.segment
+      );
+      const {renderPictoRustPages}=await import("./pictorust-export.mjs");
+      const pages = await renderPictoRustPages([
+        {nickname:"Aysu\u0301",text,strokes:[]}
+      ],"A");
+      const img = new Image(); img.src=pages[0]; await img.decode();
+      return {
+        segmentCount:graphemes.length,
+        joinedFamily:graphemes.includes("👨‍👩‍👧‍👦"),
+        joinedWorker:graphemes.includes("👩🏽‍💻"),
+        combinedAccent:graphemes.includes("e\u0301"),
+        pages:pages.length,
+        width:img.naturalWidth
+      };
+    });
+    assert.equal(complexUnicode.joinedFamily,true);
+    assert.equal(complexUnicode.joinedWorker,true);
+    assert.equal(complexUnicode.combinedAccent,true);
+    assert.equal(complexUnicode.pages,1);
+    assert.equal(complexUnicode.width,1024);
+
     await writeFile(`${screenshots}/pictorust-export-page-1.png`,
       Buffer.from(pngData.url.split(",")[1],"base64"));
 
