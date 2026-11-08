@@ -18,6 +18,7 @@ struct Request {
     created: Instant,
     result: Option<String>,
     delivered: bool,
+    previous_leaf: Option<u32>,
 }
 
 struct Invitation {
@@ -40,7 +41,7 @@ impl InviteBroker {
         Ok(())
     }
 
-    pub fn request(&self,room:&str,secret:&str,key_package:&str)->Result<String,&'static str>{
+    pub fn request(&self,room:&str,secret:&str,key_package:&str,previous_leaf:Option<u32>)->Result<String,&'static str>{
         if !valid_hex(secret,64) || key_package.is_empty() ||
            key_package.len()>MAX_REQUEST_BYTES || !key_package.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'+' || b==b'/' || b==b'='){
             return Err("invalid join request");
@@ -51,17 +52,23 @@ impl InviteBroker {
         if invite.digest!=digest {return Err("invalid invitation");}
         invite.requests.retain(|r|r.created.elapsed()<REQUEST_LIFETIME);
         if invite.requests.len()>=MAX_PENDING {return Err("pending join capacity");}
+        if let Some(leaf)=previous_leaf {
+            if leaf==0 || invite.requests.iter().any(|r|
+               r.previous_leaf==Some(leaf)) {
+                return Err("duplicate or invalid rejoin leaf");
+            }
+        }
         let mut bytes=[0u8;16];OsRng.fill_bytes(&mut bytes);
         let id=hex::encode(bytes);
-        invite.requests.push(Request{id:id.clone(),key_package:key_package.into(),created:Instant::now(),result:None,delivered:false});
+        invite.requests.push(Request{id:id.clone(),key_package:key_package.into(),created:Instant::now(),result:None,delivered:false,previous_leaf});
         Ok(id)
     }
 
-    pub fn pending(&self,room:&str)->Vec<(String,String)>{
+    pub fn pending(&self,room:&str)->Vec<(String,String,Option<u32>)>{
         let Ok(mut rooms)=self.rooms.lock() else {return Vec::new()};
         let Some(invite)=rooms.get_mut(room) else {return Vec::new()};
         invite.requests.retain(|r|r.created.elapsed()<REQUEST_LIFETIME);
-        invite.requests.iter().filter(|r|!r.delivered && r.result.is_none()).map(|r|(r.id.clone(),r.key_package.clone())).collect()
+        invite.requests.iter().filter(|r|!r.delivered && r.result.is_none()).map(|r|(r.id.clone(),r.key_package.clone(),r.previous_leaf)).collect()
     }
 
     pub fn complete(&self,room:&str,id:&str,result:&str)->Result<(),&'static str>{
@@ -99,8 +106,8 @@ mod tests{
         let room="0123456789abcdef0123456789abcdef";
         let secret="ab".repeat(32);
         b.register(room,&secret).unwrap();
-        assert!(b.request(room,&"cd".repeat(32),"AQID").is_err());
-        let id=b.request(room,&secret,"AQID").unwrap();
+        assert!(b.request(room,&"cd".repeat(32),"AQID",None).is_err());
+        let id=b.request(room,&secret,"AQID",None).unwrap();
         assert_eq!(b.pending(room).len(),1);
         assert!(b.result(room,&id,&"cd".repeat(32)).is_err());
         b.complete(room,&id,r#"{"welcome":"AQID"}"#).unwrap();
@@ -109,5 +116,9 @@ mod tests{
         assert_eq!(b.result(room,&id,&secret).unwrap(),None);
         assert_eq!(b.pending(room).len(),0,"a consumed Welcome must never reappear as a pending join");
         assert!(b.complete(room,&id,"replay").is_err());
+        let resume=b.request(room,&secret,"BAUG",Some(2)).unwrap();
+        assert!(b.request(room,&secret,"BwgJ",Some(2)).is_err(),
+            "same old bearer cannot start concurrent group rejoin requests");
+        assert!(b.pending(room).iter().any(|r|r.0==resume && r.2==Some(2)));
     }
 }
