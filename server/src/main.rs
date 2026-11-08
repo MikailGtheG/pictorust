@@ -174,7 +174,7 @@ fn router(state: AppState) -> Router {
         .route("/mls/revoke/{room_id}/{leaf}", post(revoke_mls_member))
         .route("/mls/join/register/{room_id}", post(register_join_link))
         .route("/mls/join/request/{room_id}", post(request_join))
-        .route("/mls/join/pending/{room_id}", get(pending_joins))
+        .route("/mls/join/pending/{room_id}", post(pending_joins))
         .route("/mls/join/complete/{room_id}/{id}", post(complete_join))
         .route("/mls/join/result/{room_id}/{id}", post(join_result))
         .route("/ws/{room_id}", get(connect))
