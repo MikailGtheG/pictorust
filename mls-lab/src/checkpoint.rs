@@ -9,6 +9,7 @@ use serde::{Deserialize,Serialize};
 
 const MAX_CHECKPOINT_BYTES: usize=2*1024*1024;
 const MAX_ENTRIES: usize=4096;
+type StoredEntries=Vec<(Vec<u8>,Vec<u8>)>;
 
 #[derive(Default,Debug)]
 pub struct CheckpointProvider {
@@ -33,17 +34,17 @@ pub(crate) struct Checkpoint {
     pub signer: serde_json::Value,
     pub group_id: Vec<u8>,
     pub owner_key: Option<Vec<u8>>,
-    pub storage: Vec<(Vec<u8>,Vec<u8>)>,
+    pub storage: StoredEntries,
 }
 
 impl CheckpointProvider {
-    pub(crate) fn keys(&self)->Result<Vec<(Vec<u8>,Vec<u8>)>,&'static str>{
+    pub(crate) fn keys(&self)->Result<StoredEntries,&'static str>{
         let values=self.storage.values.read().map_err(|_|"checkpoint storage poisoned")?;
         if values.len()>MAX_ENTRIES{return Err("checkpoint entries exceeded");}
         Ok(values.iter().map(|(k,v)|(k.clone(),v.clone())).collect())
     }
 
-    pub(crate) fn from_keys(keys:Vec<(Vec<u8>,Vec<u8>)>)->Result<Self,&'static str>{
+    pub(crate) fn from_keys(keys:StoredEntries)->Result<Self,&'static str>{
         if keys.len()>MAX_ENTRIES{return Err("checkpoint entries exceeded");}
         let provider=Self::default();
         {
