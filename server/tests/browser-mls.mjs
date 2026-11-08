@@ -26,7 +26,6 @@ try {
   const id=await alice.locator("#room").inputValue();
   const token=await alice.locator("#token").inputValue();
   await bob.locator("#room").fill(id);
-  await bob.locator("#token").fill(token);
   await alice.locator("#start").click();
   await alice.waitForFunction(()=>document.querySelector("#status").textContent.includes("MLS-Epoche"));
   const ownerSigner=await alice.locator("#own-signer").inputValue();
@@ -42,6 +41,9 @@ try {
   await bob.locator("#trusted-owner").fill(ownerSigner);
   await bob.locator("#join").click();
   await bob.waitForFunction(()=>document.querySelector("#status").textContent.includes("2 Mitglied"));
+  const bobToken=await bob.locator("#token").inputValue();
+  assert.match(bobToken,/^[0-9a-f]{64}$/);
+  assert.notEqual(bobToken,token,"owner bearer must not be shared with Bob");
   // Add a third independent browser and confirm existing Bob consumes the
   // authenticated owner's Add Commit before Charlie processes Welcome.
   charlie=await context.newPage();
@@ -51,7 +53,6 @@ try {
   await charlie.locator("#name").fill("Charlie");
   await charlie.locator("#name").dispatchEvent("change");
   await charlie.locator("#room").fill(id);
-  await charlie.locator("#token").fill(token);
   await charlie.waitForFunction(()=>document.getElementById("mine").value.length===64);
   await alice.locator("#invite-package").fill(await charlie.locator("#own-package").inputValue());
   await alice.locator("#verified-fingerprint").fill(await charlie.locator("#mine").inputValue());
@@ -63,6 +64,16 @@ try {
   await charlie.locator("#trusted-owner").fill(ownerSigner);
   await charlie.locator("#join").click();
   await charlie.waitForFunction(()=>document.querySelectorAll("#members p").length===3);
+  const charlieToken=await charlie.locator("#token").inputValue();
+  assert.notEqual(charlieToken,token);
+  assert.notEqual(charlieToken,bobToken);
+  const unauthorizedRevoke=await charlie.evaluate(async(room)=>{
+    const r=await fetch(`/mls/revoke/${room}/1`,{
+      method:"POST",headers:{Authorization:"Bearer "+document.querySelector("#token").value}
+    });
+    return r.status;
+  },id);
+  assert.equal(unauthorizedRevoke,403,"member cannot revoke other relay tokens");
   await alice.locator("#message").fill("MLS: Hallo ÄÖÜ ğışç 😊");
   await alice.locator("#send").click();
   await bob.locator("#feed").getByText("MLS: Hallo ÄÖÜ ğışç 😊").waitFor({timeout:15000});
@@ -87,7 +98,18 @@ try {
   await charlie.locator("#feed").getByText("Neue Epoche nur für Alice und Charlie").waitFor({timeout:15000});
   assert.equal(await bob.locator("#feed").getByText("Neue Epoche nur für Alice und Charlie").count(),0);
   assert.equal(await bob.locator("#send").isDisabled(),true);
+  // Revoked token must not be able to establish a new WebSocket, even while
+  // the rest of the group and the original owner capability remain active.
+  const revokedSocketRejected=await bob.evaluate(({room,token})=>new Promise(resolve=>{
+    const ws=new WebSocket(`ws://${location.host}/ws/${room}`,
+      ["picto.v1","auth."+token]);
+    const timer=setTimeout(()=>{ws.close();resolve(false);},4000);
+    ws.onerror=()=>{clearTimeout(timer);resolve(true);};
+    ws.onopen=()=>{clearTimeout(timer);ws.close();resolve(false);};
+  }),{room:id,token:bobToken});
+  assert.equal(revokedSocketRejected,true,"removed member must lose relay admission");
+
   await alice.screenshot({path:`${dir}/mls-after-removal.png`,fullPage:true});
   assert.deepEqual(failures,[]);
-  console.log("Real browser MLS group integration passed: three browsers, two authenticated adds, owner policy, encrypted messages, eviction and surviving-member epoch.");
+  console.log("Real browser MLS group integration passed: three browsers, distinct bearer admissions, owner policy, encrypted messages, socket revocation and surviving-member epoch.");
 }finally{await browser.close();}
