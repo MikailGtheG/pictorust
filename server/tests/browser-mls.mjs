@@ -55,7 +55,7 @@ try {
   await charlie.waitForFunction(()=>document.getElementById("mine").value.length===64);
   await alice.locator("#invite-package").fill(await charlie.locator("#own-package").inputValue());
   await alice.locator("#verified-fingerprint").fill(await charlie.locator("#mine").inputValue());
-  await alice.locator("#issued-welcome").fill("");
+  await alice.locator("#issued-welcome").evaluate(el => { el.value=""; });
   await alice.locator("#admit").click();
   await alice.waitForFunction(()=>document.getElementById("issued-welcome").value.includes("welcome"));
   await bob.waitForFunction(()=>document.querySelectorAll("#members p").length===3);
