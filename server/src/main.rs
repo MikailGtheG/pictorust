@@ -410,13 +410,13 @@ fn owner_http_authorized(headers: &HeaderMap, room: &str, auth: &RoomAuth) -> bo
 #[derive(serde::Deserialize)]
 struct JoinSecret { secret: String }
 #[derive(serde::Deserialize)]
-struct JoinSubmission { secret: String, key_package: String }
+struct JoinSubmission { secret: String, key_package: String, previous_token: Option<String> }
 #[derive(serde::Serialize,serde::Deserialize)]
 struct JoinCompletion { welcome: String, tree: String, token: String }
 #[derive(serde::Serialize)]
 struct JoinReceipt { id: String }
 #[derive(serde::Serialize)]
-struct PendingJoin { id: String, key_package: String }
+struct PendingJoin { id: String, key_package: String, previous_leaf: Option<u32> }
 
 fn owner_join_authorized(headers: &HeaderMap,room:&str,state:&AppState)->bool{
     origin_is_allowed(headers) && !temporary_room_is_expired(room) &&
@@ -439,7 +439,13 @@ async fn request_join(
     if !origin_is_allowed(&headers) || temporary_room_is_expired(&room_id){
         return Err(StatusCode::FORBIDDEN);
     }
-    let id=state.invitations.request(&room_id,&data.secret,&data.key_package)
+    // Only the actual previous device bearer may request a replacement leaf.
+    let previous_leaf=match data.previous_token {
+        Some(ref bearer)=>Some(state.admissions.leaf_for_token(&room_id,bearer)
+            .ok_or(StatusCode::FORBIDDEN)?),
+        None=>None,
+    };
+    let id=state.invitations.request(&room_id,&data.secret,&data.key_package,previous_leaf)
         .map_err(|_|StatusCode::FORBIDDEN)?;
     Ok(Json(JoinReceipt{id}))
 }
@@ -448,8 +454,8 @@ async fn pending_joins(
     State(state):State<AppState>,Path(room_id):Path<String>,headers:HeaderMap
 )->Result<Json<Vec<PendingJoin>>,StatusCode>{
     if !owner_join_authorized(&headers,&room_id,&state){return Err(StatusCode::FORBIDDEN);}
-    Ok(Json(state.invitations.pending(&room_id).into_iter().map(|(id,key_package)|
-        PendingJoin{id,key_package}).collect()))
+    Ok(Json(state.invitations.pending(&room_id).into_iter().map(|(id,key_package,previous_leaf)|
+        PendingJoin{id,key_package,previous_leaf}).collect()))
 }
 
 async fn complete_join(
