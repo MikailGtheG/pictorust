@@ -84,6 +84,39 @@ impl Client {
         Ok(bundle.key_package().clone())
     }
 
+    /// Export a one-use public KeyPackage for out-of-band authenticated onboarding.
+    pub fn key_package_wire(&self) -> ClientResult<Vec<u8>> {
+        self.key_package()?.tls_serialize_detached()
+            .map_err(|_| "cannot encode key package")
+    }
+
+    /// Validate a received KeyPackage before the owner authorizes the add.
+    /// Signature validity alone is NOT an identity check; callers must pin
+    /// the expected participant fingerprint through a separate verified channel.
+    pub fn add_wire(&mut self, wire: &[u8]) -> ClientResult<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        if wire.is_empty() || wire.len() > MAX_WIRE_SIZE {
+            return Err("invalid key package size");
+        }
+        let package_in = KeyPackageIn::tls_deserialize_exact(wire)
+            .map_err(|_| "invalid key package TLS encoding")?;
+        let package = package_in.validate(self.provider.crypto(), ProtocolVersion::Mls10)
+            .map_err(|_| "invalid key package signature or lifetime")?;
+        let (commit, welcome) = self.add(&package)?;
+        let tree = self.ratchet_tree()?.tls_serialize_detached()
+            .map_err(|_| "cannot serialize ratchet tree")?;
+        if tree.len() > MAX_WIRE_SIZE { return Err("ratchet tree too large"); }
+        Ok((commit, welcome, tree))
+    }
+
+    pub fn accept_welcome_wire(&mut self, welcome: &[u8], tree: &[u8]) -> ClientResult<()> {
+        if tree.is_empty() || tree.len() > MAX_WIRE_SIZE {
+            return Err("invalid ratchet tree size");
+        }
+        let parsed = RatchetTreeIn::tls_deserialize_exact(tree)
+            .map_err(|_| "invalid ratchet tree TLS encoding")?;
+        self.accept_welcome(welcome, parsed)
+    }
+
     pub fn start_group(&mut self) -> ClientResult<()> {
         if self.group.is_some() { return Err("group already initialized"); }
         let group = MlsGroup::new(
@@ -216,6 +249,27 @@ impl Client {
     pub fn active(&self) -> bool {
         self.group.as_ref().is_some_and(MlsGroup::is_active)
     }
+    /// The caller must verify both credential bytes and signature keys out of band.
+    /// Leaf indices are ephemeral and change on membership updates; never treat
+    /// them as stable identities or authorization records.
+    pub fn members(&self) -> ClientResult<Vec<(u32, Vec<u8>, Vec<u8>)>> {
+        let group = self.group.as_ref().ok_or("group needed")?;
+        Ok(group.members().map(|member| (
+            member.index.u32(),
+            member.credential.serialized_content().to_vec(),
+            member.signature_key.to_vec(),
+        )).collect())
+    }
+
+    pub fn remove_leaf(&mut self, leaf: u32) -> ClientResult<Vec<u8>> {
+        let member_index = self.members()?;
+        if !member_index.iter().any(|(index, _, _)| *index == leaf) {
+            return Err("leaf not present in MLS group");
+        }
+        if self.own_leaf()?.u32() == leaf { return Err("cannot remove own leaf"); }
+        self.remove(LeafNodeIndex::new(leaf))
+    }
+
     pub fn ratchet_tree(&self) -> ClientResult<RatchetTreeIn> {
         Ok(self.group.as_ref().ok_or("group needed")?.export_ratchet_tree().into())
     }
