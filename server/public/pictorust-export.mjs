@@ -47,6 +47,11 @@ const graphemeSegmenter = new Intl.Segmenter("und", { granularity: "grapheme" })
 function graphemes(value) {
   return Array.from(graphemeSegmenter.segment(String(value)), item => item.segment);
 }
+// Layout and glyph rendering must use the SAME font fallback chain.
+// A prior mismatch (measure: monospace, raster: implicit serif fallback)
+// moved unsupported umlauts and Turkish accents between glyph cells.
+const DS_FONT = '10px "nds", "DejaVu Sans Mono", monospace';
+const EMOJI_FONT = '10px "Noto Color Emoji", "Segoe UI Emoji", sans-serif';
 const GLYPH_SIZE = 20;
 const GLYPH_BASELINE = 13;
 function createPixelFont(ctx) {
@@ -54,7 +59,7 @@ function createPixelFont(ctx) {
   const isEmoji = character => /\p{Extended_Pictographic}/u.test(character);
   const widthOf = character => {
     const original = ctx.font;
-    if (isEmoji(character)) ctx.font = '10px "Noto Color Emoji", "Segoe UI Emoji", sans-serif';
+    if (isEmoji(character)) ctx.font = EMOJI_FONT;
     const result = Math.max(1, Math.ceil(ctx.measureText(character).width));
     ctx.font = original;
     return result;
@@ -67,7 +72,7 @@ function createPixelFont(ctx) {
     canvas.height = GLYPH_SIZE;
     const g = canvas.getContext("2d", { willReadFrequently: true });
     const emoji = isEmoji(character);
-    g.font = emoji ? '10px "Noto Color Emoji", "Segoe UI Emoji", sans-serif' : '10px "nds"';
+    g.font = emoji ? EMOJI_FONT : DS_FONT;
     g.textBaseline = "alphabetic";
     g.fillStyle = "#fff";
     g.fillText(character, 1, GLYPH_BASELINE);
@@ -230,7 +235,7 @@ export async function renderPictoRustPages(messages, roomLetter = "A") {
   await document.fonts.load('10px "nds"');
   if (!document.fonts.check('10px "nds"')) throw new Error("Original Nintendo DS font unavailable");
   const measure = document.createElement("canvas").getContext("2d");
-  measure.font = "10px nds, monospace";
+  measure.font = DS_FONT;
   const pixelFont = createPixelFont(measure);
   const parts = splitMessages(pixelFont, messages);
   const pages = groupPages(parts);
