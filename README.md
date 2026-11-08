@@ -4,15 +4,79 @@
 
 > **Original creator credit:** This project is derived from [ayunami2000/ayunpictojava](https://github.com/ayunami2000/ayunpictojava). The original Java/browser work, DS sprites and bundled font are retained with attribution. See [CREDITS.md](CREDITS.md) for rights and provenance; this fork is independent and unaffiliated with Nintendo.
 
-## Release candidate status
+<p align="center"><strong>We trust in PictoRust!</strong></p>
 
-The Rust relay is entering an **internal localhost-only `v0.2.0-rc.1`**
-verification phase. This is not a public release or a production-grade secure
-messenger. Review the [release checklist](docs/RELEASE_CANDIDATE.md), the
-[RC verification workflow](.github/workflows/pictorust-release-candidate.yml)
-and [real Chromium screenshot workflow](.github/workflows/pictochat-browser-screenshots.yml)
-before judging readiness. The binary is deliberately not published while
-upstream asset redistribution terms and the browser MLS security gates remain open.
+<p align="center"><em>Das PictoChat-Gefühl von damals. Mit Verschlüsselung für heute.</em></p>
+
+## Wie alles begann
+
+Die Idee zu **PictoRust** begann nicht mit einem Businessplan, sondern mit
+einem Link von **Alperen**. Er zeigte uns **picto.app** – und sofort war
+dieses Nintendo-DS-PictoChat-Gefühl wieder da: kleine Räume, Zeichnungen
+und ein Chat, der einfach Spaß macht.
+
+Aus Neugier wurde ein technischer Code-Review. Dabei haben wir uns Fragen
+gestellt, die wir bei einem privaten Messenger unbedingt beantwortet haben
+wollten: **Wer kann Nachrichten mitlesen? Wo endet die Verschlüsselung?
+Welche Informationen verarbeitet der Server?** Die vorgefundene
+Java-basierte Architektur und die aus unserer Sicht nicht ausreichend
+nachvollziehbaren Datenschutz- und Verschlüsselungsgarantien waren der
+Ausgangspunkt unserer Diskussion. Gerade die Möglichkeit, dass ein Server
+Chats mitsehen könnte, wollten wir für *unser eigenes Projekt* technisch
+ausschließen.
+
+**Wichtig:** Das beschreibt unsere damaligen Bedenken und Motivation –
+keine nachgewiesene Behauptung, dass picto.app tatsächlich Gespräche
+überwacht oder Daten missbraucht. Eine Code-Betrachtung allein kann das
+Betreiberverhalten nicht beweisen.
+
+Statt nur über die Probleme zu reden, wollten wir zeigen, wie man das
+vertraute PictoChat-Erlebnis mit modernen Mitteln neu umsetzen kann:
+mit einem **Rust-Server**, **OpenMLS-basierter Ende-zu-Ende-Verschlüsselung**,
+sicheren Gruppeneinladungen, originalgetreuer Nintendo-DS-Bedienung und
+möglichst wenig unnötiger Datenspeicherung.
+
+So entstand **PictoRust**.
+
+> **We trust in PictoRust!** – Nicht, weil man einem Server blind
+> vertrauen soll, sondern weil Privatsphäre überprüfbare Technik braucht.
+
+## Projektziele
+
+- **Originalgefühl bewahren:** Zwei DS-Bildschirme, A–E-Räume, Tastatur,
+  Zeichnungen und pixelgetreue PDF-Exporte behalten ihre Form.
+- **Privatsphäre technisch umsetzen:** OpenMLS verschlüsselt Nachrichten
+  auf den Endgeräten. Der Rust-Relay kann deren Inhalt nicht entschlüsseln.
+- **Einfach statt kompliziert:** Raum öffnen, Link teilen, chatten –
+  ohne sichtbare Kryptografie-Menüs.
+- **Offen nachvollziehbar:** Code, Tests, bekannte Einschränkungen und
+  Herkunft der ursprünglichen Arbeit bleiben dokumentiert.
+- **Keine falschen Versprechen:** Dieses Projekt ist noch kein unabhängig
+  auditierter, fertig abgesicherter Messenger.
+
+## Aktueller Release-Stand
+
+**PictoRust v0.2.0 RC – technische Vorschau.** Die originale UI mit
+OpenMLS, Einladungslinks, Zeichnungen, PDF und einem begrenzten sicheren
+Wiederbeitritt funktioniert in automatisierten Mehrbrowser-Tests über
+localhost sowie HTTPS/WSS. Der Rust-Relay wird hinter einem TLS-Proxy
+weiterhin nur an `127.0.0.1` gebunden.
+
+**Nicht als produktionssicher freigegeben:** Es fehlen unter anderem
+dauerhafte sichere MLS-Zustandswiederherstellung nach einem Browserneustart,
+Offline-Synchronisierung über verpasste Gruppen-Epochen, umfassende
+Identitätsprüfung und ein unabhängiges Security-Audit.
+
+Die Projektverantwortlichen geben an, dass eine Erlaubnis zur Nutzung
+der benötigten Materialien vorliegt. Der genaue Umfang dieser Erlaubnis
+(Code, Grafiken, Schriftarten, Verteilung und Änderungen) muss vor einer
+öffentlichen Veröffentlichung mit der jeweiligen Rechtekette
+abgeglichen und dokumentiert werden; die Herkunft bleibt in
+[CREDITS.md](CREDITS.md) erhalten.
+
+Siehe [Release-Gates](docs/RELEASE_CANDIDATE.md),
+[Deployment](deploy/README.md) und
+[echte Chromium-/MLS-Integrationstests](.github/workflows/pictorust-browser-mls.yml).
 
 ## OpenMLS in the original Nintendo DS interface
 
@@ -85,7 +149,7 @@ The modern client is in `frontend/`, the volatile Rust relay is in `server/`, an
 
 **PictoRust PDF export:** renders a continuous original-width Nintendo DS sprite chat strip, without resetting the conversation at each 192-pixel screen. Each 256×520 logical raster is rendered from integer-aligned glyph bitmaps and pre-upscaled 4× into a 1024×2080 PNG, then printed at 512×1040 CSS pixels and centered on an A4 portrait page. Message frames stay intact across page boundaries. Original nds.ttf font and sprite backgrounds are used; no headers, footers, explanatory notes, access tokens or document-style cards. Browser export is client-only. The local browser holds the history only for the active session.
 
-This development branch is not ready for a public deployment: OpenMLS is not yet integrated into the shipping browser. The original Java implementation remains below for historical compatibility.
+This development branch uses OpenMLS in the original browser interface. Public deployment still requires independent security review and reliable persistent MLS recovery. The original Java instructions below remain for historical compatibility.
 
 ## Original fork / legacy Java documentation
 
