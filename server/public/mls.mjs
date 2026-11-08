@@ -89,7 +89,7 @@ async function connect() {
   if(socket) throw Error("Bereits verbunden");
   roomId=room;
   return new Promise((resolve,reject)=>{
-    const ws=new WebSocket(`ws://${location.host}/ws/${room}`,["picto.v1",`auth.${token}`]);
+    const ws=new WebSocket(`${location.protocol==="https:"?"wss:":"ws:"}//${location.host}/ws/${room}`,["picto.v1",`auth.${token}`]);
     ws.binaryType="arraybuffer";
     socket=ws;
     let open=false;
