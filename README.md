@@ -30,15 +30,17 @@ release yet:** per-member relay admission revocation, authenticated invitation
 delivery, recoverable offline state, independent security review and asset
 redistribution rights remain open.
 
-## Unified local MLS backend and DS integration
+## Unified local MLS backend (UI integration pending)
 
 The **same Rust relay process** now serves the original PictoRust page at
 `/`, the MLS group controller at `/mls`, the single-origin WebAssembly
 package, and the owner-authorized group admission/revocation endpoints.
 MLS encryption and signing keys **remain client-side**; the server never
-decrypts group messages. The MLS chat now shows original DS image assets,
-renders real encrypted text **and canvas drawings**, and reuses the original
-pixel-raster A4 PDF exporter.
+decrypts group messages. The experimental MLS controller remains separate
+from the original DS interface at `/`. An attempted replacement of the
+DS layout was reverted after design review. Integrating MLS into the
+**existing, pixel-accurate original UI** (including its text, sketches and
+PDF functions) is the next step; no alternative DS layout is approved.
 
 For a consistent local development bundle on Linux (Rust, wasm-pack and
 OpenSSL required):
@@ -56,7 +58,7 @@ local machine; **it is not a publicly licensed release package**.
 `GET /mls/healthz` returns HTTP 503 until both required WASM assets are
 actually present.
 
-This unifies transport/deployment but does not yet make the old `/` UI
+This unifies transport/deployment but does not yet make the original `/` UI
 use MLS automatically. Production still requires reviewed identity recovery,
 offline Commit handling, safe invitation delivery, and asset licensing.
 
