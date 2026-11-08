@@ -24,6 +24,13 @@ pub enum Incoming {
 
 pub type ClientResult<T> = Result<T, &'static str>;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberInfo {
+    pub leaf: u32,
+    pub credential: Vec<u8>,
+    pub signature_key: Vec<u8>,
+}
+
 pub fn wrap(kind: u8, data: Vec<u8>) -> ClientResult<Vec<u8>> {
     if !matches!(kind, KIND_APPLICATION | KIND_COMMIT | KIND_WELCOME | KIND_KEY_PACKAGE)
         || data.is_empty() || data.len().saturating_add(2) > MAX_WIRE_SIZE
@@ -252,18 +259,18 @@ impl Client {
     /// The caller must verify both credential bytes and signature keys out of band.
     /// Leaf indices are ephemeral and change on membership updates; never treat
     /// them as stable identities or authorization records.
-    pub fn members(&self) -> ClientResult<Vec<(u32, Vec<u8>, Vec<u8>)>> {
+    pub fn members(&self) -> ClientResult<Vec<MemberInfo>> {
         let group = self.group.as_ref().ok_or("group needed")?;
-        Ok(group.members().map(|member| (
-            member.index.u32(),
-            member.credential.serialized_content().to_vec(),
-            member.signature_key.to_vec(),
-        )).collect())
+        Ok(group.members().map(|member| MemberInfo {
+            leaf: member.index.u32(),
+            credential: member.credential.serialized_content().to_vec(),
+            signature_key: member.signature_key.to_vec(),
+        }).collect())
     }
 
     pub fn remove_leaf(&mut self, leaf: u32) -> ClientResult<Vec<u8>> {
         let member_index = self.members()?;
-        if !member_index.iter().any(|(index, _, _)| *index == leaf) {
+        if !member_index.iter().any(|member| member.leaf == leaf) {
             return Err("leaf not present in MLS group");
         }
         if self.own_leaf()?.u32() == leaf { return Err("cannot remove own leaf"); }
