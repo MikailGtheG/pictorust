@@ -38,7 +38,11 @@ jobs:
           set -euo pipefail
           tag=v0.2.0-rc.2
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Already published: $tag"
+            gh release edit "$tag" \
+              --prerelease \
+              --title "PictoRust v0.2.0-rc.2 — Technical Preview" \
+              --notes-file docs/RELEASE_NOTES_v0.2.0-rc.2.md
+            echo "Release notes refreshed: $tag"
             exit 0
           fi
           gh release create "$tag" \
