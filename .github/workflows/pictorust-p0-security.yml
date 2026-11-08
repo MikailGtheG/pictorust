@@ -33,6 +33,7 @@ jobs:
         run: node scripts/security/p0-contract.test.mjs
       - name: Compile and check Rust transport boundaries
         run: |
+          cargo generate-lockfile --manifest-path server/Cargo.toml
           cargo test --manifest-path server/Cargo.toml --locked
           cargo clippy --manifest-path server/Cargo.toml --all-targets --locked -- -D warnings
 
@@ -46,10 +47,12 @@ jobs:
           persist-credentials: false
       - name: Install version-pinned cargo-audit
         run: cargo install --locked cargo-audit --version 0.22.2
-      - name: Audit all committed lockfiles (do not silently waive advisories)
+      - name: Audit each generated lockfile (do not silently waive advisories)
         run: |
           set -euo pipefail
-          for lockfile in server/Cargo.lock mls-web/Cargo.lock mls-lab/Cargo.lock; do
+          for manifest in server/Cargo.toml mls-web/Cargo.toml mls-lab/Cargo.toml; do
+            cargo generate-lockfile --manifest-path "$manifest"
+            lockfile="$(dirname "$manifest")/Cargo.lock"
             test -s "$lockfile"
             cargo audit --file "$lockfile" --deny warnings
           done
