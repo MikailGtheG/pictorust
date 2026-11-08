@@ -54,6 +54,16 @@ impl MembershipAdmissions {
         Some(receiver)
     }
 
+    /// Map a still-live device bearer to its existing leaf. A rejoin request
+    /// must prove possession of its old token before replacing that leaf.
+    pub fn leaf_for_token(&self, room: &str, token: &str) -> Option<u32> {
+        let digest=digest_token(token)?;
+        let all=self.rooms.lock().ok()?;
+        let member=all.get(room)?.iter().find(|entry|entry.digest==digest)?;
+        if *member.killed.borrow() {return None;}
+        Some(member.leaf)
+    }
+
     pub fn revoke(&self, room: &str, leaf: u32) -> bool {
         let Ok(mut all)=self.rooms.lock() else {return false;};
         let Some(tokens)=all.get_mut(room) else {return false;};
@@ -77,6 +87,8 @@ mod tests {
         let invite=registry.mint(room,1).unwrap();
         assert_eq!(invite.len(),64);
         assert!(registry.verify(room,&invite).is_some());
+        assert_eq!(registry.leaf_for_token(room,&invite),Some(1));
+        assert_eq!(registry.leaf_for_token(other,&invite),None);
         assert!(registry.verify(other,&invite).is_none());
         assert!(registry.verify(room,&"00".repeat(32)).is_none());
         assert!(registry.mint(room,1).is_err());
@@ -86,6 +98,7 @@ mod tests {
         subscriber.changed().await.unwrap();
         assert!(*subscriber.borrow_and_update());
         assert!(registry.verify(room,&invite).is_none());
+        assert_eq!(registry.leaf_for_token(room,&invite),None);
         assert!(!registry.revoke(room,1));
         assert!(registry.mint(room,1).is_ok());
     }
