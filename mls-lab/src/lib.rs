@@ -1,6 +1,7 @@
 //! OpenMLS proof-of-concept in an isolated crate, NOT a deployable chat client.
 //! Per-user providers represent independent end-device key storage.
 pub mod client;
+pub mod checkpoint;
 #[cfg(test)]
 mod tests {
     use openmls::prelude::{tls_codec::*, *};
