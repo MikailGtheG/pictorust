@@ -12,7 +12,7 @@ This is an isolated, **room-capability-gated prototype with experimental client-
 - Temporary room creation is capped at **32 requests per 60 seconds across this relay process**. Once exhausted, the endpoint returns HTTP 429. This deliberately coarse process-wide quota is not IP-based anti-DDoS protection.\n- At most 256 active rooms. Inactive rooms are reclaimed at the next join.
 - Each room accepts at most 16 concurrent WebSocket sessions; over-capacity handshakes receive HTTP 503. Slots are released when a session ends.
 - At most 128 concurrent upgraded WebSocket sessions (extra handshakes receive HTTP 503).
-- Each connection has a fixed one-second quota of 20 binary messages. Exceeding the quota terminates that connection. This is a basic abuse guard, not fairness across IPs or identities.
+- Each connection has a fixed one-second quota of 20 binary messages. The entire room also has a shared 64-frames/second quota to prevent coordinated participant floods. Exceeding either quota terminates the sending connection. This is a basic abuse guard, not fairness across IPs or identities.
 - Browser WebSocket origins are restricted to `http://127.0.0.1:8787` and `http://localhost:8787`. Non-browser clients can omit the Origin header, so this is **not authentication**.
 - Retains recent frames only in a bounded `tokio::broadcast` buffer while subscribers hold a room. Once all room handles are dropped, the room and its buffer are freed.
 - Does not store chats to disk, use a database, or include external service integrations.
