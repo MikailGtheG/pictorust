@@ -154,6 +154,7 @@ fn router(state: AppState) -> Router {
         .route("/mls", get(mls_home))
         .route("/mls/healthz", get(mls_readiness))
         .route("/mls/app.mjs", get(mls_app_module))
+        .route("/mls/session.mjs", get(mls_session_module))
         .route("/mls/pkg/{name}", get(mls_wasm_asset))
         .route("/original/images/{name}", get(original_picto_image))
         .route("/original/nds.ttf", get(original_picto_font))
@@ -289,6 +290,15 @@ async fn mls_home() -> (
     )
 }
 
+async fn mls_session_module() -> (
+    [(axum::http::header::HeaderName, &'static str); 2], &'static str,
+) {
+    ([
+        (axum::http::header::CONTENT_TYPE,"text/javascript; charset=utf-8"),
+        (axum::http::header::CACHE_CONTROL,"no-store"),
+    ],include_str!("../public/mls-session.mjs"))
+}
+
 async fn mls_app_module() -> (
     [(axum::http::header::HeaderName, &'static str); 2],
     &'static str,
@@ -321,7 +331,7 @@ async fn dev_home() -> ([(axum::http::header::HeaderName, &'static str); 5], &'s
         [
             (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
             (axum::http::header::CACHE_CONTROL, "no-store"),
-            (axum::http::header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws://127.0.0.1:8787 ws://localhost:8787; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"),
+            (axum::http::header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws://127.0.0.1:8787 ws://localhost:8787; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"),
             (axum::http::header::REFERRER_POLICY, "no-referrer"),
             (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
