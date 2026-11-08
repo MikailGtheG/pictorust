@@ -24,7 +24,7 @@ function wrapLines(font, text, maxWidth) {
   for (const paragraph of String(text || "").split("\n")) {
     if (!paragraph) { lines.push(""); continue; }
     let line = "";
-    for (const point of Array.from(paragraph)) {
+    for (const point of graphemes(paragraph)) {
       const candidate = line + point;
       if (line && font.width(candidate) > maxWidth) {
         lines.push(line);
@@ -41,6 +41,12 @@ function wrapLines(font, text, maxWidth) {
 // The source font is the original nds.ttf. Rasterize each glyph on a fixed
 // integer grid and remove grayscale antialiasing before composing the message.
 // This avoids Chromium/PDF subpixel shifts and blurry doubled pixels.
+// Grapheme segmentation keeps accents and multi-codepoint color emoji together.
+// Codepoint iteration separates combining marks and ZWJ sequences, causing shifts.
+const graphemeSegmenter = new Intl.Segmenter("und", { granularity: "grapheme" });
+function graphemes(value) {
+  return Array.from(graphemeSegmenter.segment(String(value)), item => item.segment);
+}
 const GLYPH_SIZE = 20;
 const GLYPH_BASELINE = 13;
 function createPixelFont(ctx) {
@@ -79,12 +85,12 @@ function createPixelFont(ctx) {
     return item;
   }
   function width(text) {
-    return Array.from(text).reduce((total, char) => total + glyph(char).advance, 0);
+    return graphemes(text).reduce((total, char) => total + glyph(char).advance, 0);
   }
   function draw(target, text, x, top, color) {
     const penX = Math.round(x), penY = Math.round(top);
     let pos = 0;
-    for (const char of Array.from(text)) {
+    for (const char of graphemes(text)) {
       const bitmap = glyph(char);
       if (bitmap.emoji) {
         // Preserve native colored emoji instead of tinting them monochrome.
