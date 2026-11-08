@@ -4,9 +4,10 @@
 >
 > Das PictoChat-Gefühl von damals. Mit Verschlüsselung für heute.
 
-**Status:** Release-Candidate-Unterlagen; ein öffentlicher Release ist
-hiermit **nicht** bereits veröffentlicht oder als unabhängig
-sicherheitsgeprüft freigegeben.
+**Status:** Öffentlich veröffentlichter GitHub-**Pre-release**
+(Quellcode-Technical-Preview). **Nicht** als unabhängig
+sicherheitsgeprüfter oder für sensible Chats produktionsreifer
+Messenger freigegeben. Es gibt derzeit keine geprüften Binärpakete.
 
 ## Highlights
 
@@ -45,9 +46,9 @@ Abnahmetests auf realen Geräten stehen noch aus.
 
 Siehe [README](../README.md),
 [Deployment](../deploy/README.md) und
-[Release-Gates](RELEASE_CANDIDATE.md). Vor einem Tag oder einer
-Veröffentlichung muss der konkrete Merge-Commit auf allen sechs
-GitHub-Actions-Workflows erfolgreich gewesen sein.
+[Release-Gates](RELEASE_CANDIDATE.md). Vor dem geprüften RC2-Quellcode-Merge waren alle sechs
+GitHub-Actions-Workflows erfolgreich. Das ersetzt weder einen unabhängigen
+Security-Audit noch eine reale Produktionsabnahme.
 
 ## Danksagung und Ursprung
 
