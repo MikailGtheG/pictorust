@@ -148,6 +148,7 @@ fn router(state: AppState) -> Router {
         .route("/", get(dev_home))
         .route("/healthz", get(healthz))
         .route("/mls", get(mls_home))
+        .route("/mls/healthz", get(mls_readiness))
         .route("/mls/app.mjs", get(mls_app_module))
         .route("/mls/pkg/{name}", get(mls_wasm_asset))
         .route("/original/images/{name}", get(original_picto_image))
@@ -218,14 +219,39 @@ async fn crypto_module() -> ([(axum::http::header::HeaderName, &'static str); 2]
 // WASM assets are built by wasm-pack into mls-web/pkg (never served from
 // arbitrary paths). Only explicit generated files are exposed. This local
 // developer endpoint is unavailable until the WASM package is built.
+fn mls_asset_directory() -> String {
+    std::env::var("PICTORUST_MLS_ASSETS")
+        .unwrap_or_else(|_| "../mls-web/pkg".to_owned())
+}
+
+// The relay can be healthy even if optional frontend assets were omitted.
+// MLS-specific readiness therefore reports failure until the real WASM/JS
+// package is deployed, without exposing filesystem paths or key material.
+async fn mls_readiness() -> Result<
+    ([(axum::http::header::HeaderName, &'static str); 2], &'static str),
+    StatusCode
+> {
+    let dir=mls_asset_directory();
+    for file in ["pictorust_mls_web.js","pictorust_mls_web_bg.wasm"] {
+        let metadata=tokio::fs::metadata(format!("{dir}/{file}")).await
+            .map_err(|_|StatusCode::SERVICE_UNAVAILABLE)?;
+        if !metadata.is_file() || metadata.len()<64 {
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+    Ok(([
+        (axum::http::header::CONTENT_TYPE,"text/plain; charset=utf-8"),
+        (axum::http::header::CACHE_CONTROL,"no-store"),
+    ],"ok"))
+}
+
 async fn mls_wasm_asset(Path(name): Path<String>) -> Result<Response, StatusCode> {
     let media = match name.as_str() {
         "pictorust_mls_web.js" => "text/javascript; charset=utf-8",
         "pictorust_mls_web_bg.wasm" => "application/wasm",
         _ => return Err(StatusCode::NOT_FOUND),
     };
-    let directory = std::env::var("PICTORUST_MLS_ASSETS")
-        .unwrap_or_else(|_| "../mls-web/pkg".to_owned());
+    let directory = mls_asset_directory();
     let bytes = tokio::fs::read(format!("{directory}/{name}"))
         .await.map_err(|_| StatusCode::NOT_FOUND)?;
     Response::builder()
