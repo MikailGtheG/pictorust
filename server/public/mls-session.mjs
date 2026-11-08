@@ -69,7 +69,7 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
     const id=room();
     if(!validHex(id,32)||!validHex(capability,64))throw Error("Raumzugang ungültig");
     await new Promise((resolve,reject)=>{
-      const socket=new WebSocket("ws://"+location.host+"/ws/"+id,
+      const socket=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/"+id,
         ["picto.v1","auth."+capability]);
       ws=socket;socket.binaryType="arraybuffer";let opened=false;
       socket.onopen=()=>{opened=true;resolve();};
