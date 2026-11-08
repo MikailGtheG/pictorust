@@ -1,0 +1,48 @@
+name: PictoRust RC2 technical prerelease
+
+on:
+  push:
+    branches:
+      - release/v0.2.0-rc.2
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  technical-prerelease:
+    if: github.repository == 'MikailGtheG/pictorust'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release is based on the tested, merged RC2
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor 68de794e442a4143fb7d6fdde7b8d71ae69d3d42 "$GITHUB_SHA"
+          test -f docs/RELEASE_NOTES_v0.2.0-rc.2.md
+          test -f docs/RIGHTS_RECORD.md
+          test -f deploy/Caddyfile
+          test -f mls-web/Cargo.toml
+          grep -Fq 'We trust in PictoRust!' README.md
+
+      - name: Publish source-only technical preview (not a security-certified release)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag=v0.2.0-rc.2
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Already published: $tag"
+            exit 0
+          fi
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "PictoRust v0.2.0-rc.2 — Technical Preview" \
+            --notes-file docs/RELEASE_NOTES_v0.2.0-rc.2.md
