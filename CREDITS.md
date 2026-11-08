@@ -28,7 +28,13 @@ Fork development: https://github.com/MikailGtheG/pictorust
 **Do not assume this repo is MIT/Apache licensed.** No upstream LICENSE file
 was identified during the 2026-11-06 provenance review. Absence of a license
 does not grant unrestricted copying, resale or redistribution rights.
-Verify the original project's code, assets and font permissions with the
-relevant rights holders before any public distribution or product release.
+The PictoRust maintainer reports having obtained permission to use the
+underlying materials. The grant's precise scope and provenance have **not
+been independently validated in this repository**: before distributing
+modified binaries or static artifacts, retain a written rights record
+covering source code, DS-style graphics, bundled pixel font, modification,
+public redistribution and any attribution/notice requirements. Do not
+present a private permission statement as a public SPDX license.
+
 
 Retain this attribution whenever displaying the fork or its project page.
