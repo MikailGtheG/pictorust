@@ -722,7 +722,7 @@ mod tests {
         assert!(include_str!("../public/app.mjs").contains("identity.mjs"));
         assert!(html.contains("app.mjs"));
         assert!(!html.contains("<script type=\"module\">"));
-        assert!(include_str!("main.rs").contains("script-src \'self\';"));
+        assert!(include_str!("main.rs").contains("wasm-unsafe-eval"));
         assert!(html.contains("session.mjs") || include_str!("../public/app.mjs").contains("session.mjs"));
         let app = include_str!("../public/app.mjs");
         assert!(app.contains("verifyMessage("));
