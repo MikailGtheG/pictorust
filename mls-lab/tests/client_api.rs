@@ -81,7 +81,7 @@ fn wire_invite_membership_and_rejoin_rejects_stale_client() {
     charlie.accept_welcome_wire(&charlie_welcome, &charlie_tree).unwrap();
     let member_list = alice.members().unwrap();
     assert_eq!(member_list.len(), 3);
-    assert!(member_list.iter().all(|(_, credential, key)| !credential.is_empty() && !key.is_empty()));
+    assert!(member_list.iter().all(|member| !member.credential.is_empty() && !member.signature_key.is_empty()));
     let bob_leaf = bob.own_leaf().unwrap().u32();
     assert!(alice.remove_leaf(4000000).is_err());
     assert!(alice.remove_leaf(alice.own_leaf().unwrap().u32()).is_err());
