@@ -30,10 +30,11 @@ pub struct Room {
 struct RoomIngressQuota {
     started: Instant,
     frames: u32,
+    protocol: Option<u8>,
 }
 
 impl RoomIngressQuota {
-    fn new() -> Self { Self { started: Instant::now(), frames: 0 } }
+    fn new() -> Self { Self { started: Instant::now(), frames: 0, protocol: None } }
 
     fn permit(&mut self, now: Instant) -> bool {
         if now.duration_since(self.started) >= Duration::from_secs(1) {
@@ -64,7 +65,15 @@ impl Room {
         // can otherwise publish 16×20 frames/s and overwhelm each subscriber.
         {
             let mut ingress = self.ingress.lock().map_err(|_| "room quota lock poisoned")?;
+            // Lock protocol on first authenticated room publication. Never mix
+            // legacy PSK v2 traffic with MLS v3 membership/epoch messages.
+            // A new empty room may choose a fresh protocol; active rooms cannot.
+            let version = payload[0];
+            if ingress.protocol.is_some_and(|chosen| chosen != version) {
+                return Err("room protocol version mismatch");
+            }
             if !ingress.permit(Instant::now()) { return Err("room publish quota exceeded"); }
+            ingress.protocol = Some(version);
         }
         // No persistence: if no receiver exists, the message is dropped.
         let _ = self.sender.send(payload);
@@ -137,14 +146,39 @@ mod tests {
         assert!(room.publish(vec![2; MIN_ENVELOPE_BYTES - 1]).is_err());
         assert!(room.publish(vec![1; MIN_ENVELOPE_BYTES]).is_err());
         assert!(room.publish(vec![2; MIN_ENVELOPE_BYTES]).is_ok());
-        assert!(room.publish(vec![3, MLS_KIND_APPLICATION, 42]).is_ok());
-        assert!(room.publish(vec![3, MLS_KIND_COMMIT, 42]).is_ok());
-        assert!(room.publish(vec![3, MLS_KIND_WELCOME, 42]).is_ok());
-        assert!(room.publish(vec![3, MLS_KIND_KEY_PACKAGE, 42]).is_ok());
+        let mls_room = rooms.join("ffffffffffffffffffffffffffffffff").unwrap();
+        assert!(mls_room.publish(vec![3, MLS_KIND_APPLICATION, 42]).is_ok());
+        assert!(mls_room.publish(vec![3, MLS_KIND_COMMIT, 42]).is_ok());
+        assert!(mls_room.publish(vec![3, MLS_KIND_WELCOME, 42]).is_ok());
+        assert!(mls_room.publish(vec![3, MLS_KIND_KEY_PACKAGE, 42]).is_ok());
+        assert!(room.publish(vec![3, MLS_KIND_APPLICATION, 42]).is_err());
+        assert!(mls_room.publish(vec![2; MIN_ENVELOPE_BYTES]).is_err());
         assert!(room.publish(vec![3, 0, 42]).is_err());
         assert!(room.publish(vec![3, 5, 42]).is_err());
         assert!(room.publish(vec![3, 1]).is_err());
         assert!(room.publish(vec![3, 1, 42].into_iter().chain(vec![0u8; MAX_FRAME_BYTES].into_iter()).collect()).is_err());
+    }
+
+    #[test]
+    fn room_protocol_lock_is_independent_and_released_with_empty_room() {
+        let rooms = Rooms::default();
+        let id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let group = rooms.join(id).unwrap();
+        assert!(group.publish(vec![3, MLS_KIND_COMMIT, 1]).is_ok());
+        assert_eq!(
+            group.publish(vec![2; MIN_ENVELOPE_BYTES]).unwrap_err(),
+            "room protocol version mismatch"
+        );
+        assert!(group.publish(vec![3, MLS_KIND_WELCOME, 1]).is_ok());
+        drop(group);
+        let replacement = rooms.join(id).unwrap();
+        // In-memory room state is ephemeral; no protocol lock persists after
+        // every participant has departed.
+        assert!(replacement.publish(vec![2; MIN_ENVELOPE_BYTES]).is_ok());
+        assert_eq!(
+            replacement.publish(vec![3, MLS_KIND_COMMIT, 1]).unwrap_err(),
+            "room protocol version mismatch"
+        );
     }
 
     #[test]
