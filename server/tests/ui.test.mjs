@@ -7,7 +7,7 @@ const page = readFileSync(new URL("../public/index.html", import.meta.url), "utf
 const script = readFileSync(new URL("../public/app.mjs", import.meta.url), "utf8");
 test("browser module exists and parses as JavaScript", () => {
   assert.match(page, /src="\.\/app\.mjs"/);
-  const js = script.replace(/^\s*import\s*\{[^}]+\}\s*from\s*"\.\/[a-z-]+\.mjs";/gm, "");
+  const js = script.replace(/^\s*import\s*\{[^}]+\}\s*from\s*"[^"]+\.mjs";/gm, "");
   assert.doesNotThrow(() => new vm.Script(js));
 });
 test("browser does not transmit a legacy plaintext message", () => {
