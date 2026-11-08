@@ -143,6 +143,9 @@ fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(dev_home))
         .route("/healthz", get(healthz))
+        .route("/mls", get(mls_home))
+        .route("/mls/app.mjs", get(mls_app_module))
+        .route("/mls/pkg/{name}", get(mls_wasm_asset))
         .route("/original/images/{name}", get(original_picto_image))
         .route("/original/nds.ttf", get(original_picto_font))
         .route("/crypto.mjs", get(crypto_module))
@@ -206,6 +209,58 @@ async fn crypto_module() -> ([(axum::http::header::HeaderName, &'static str); 2]
 }
 
 // Readiness is intentionally shallow: no room counts, capabilities or keys.
+// WASM assets are built by wasm-pack into mls-web/pkg (never served from
+// arbitrary paths). Only explicit generated files are exposed. This local
+// developer endpoint is unavailable until the WASM package is built.
+async fn mls_wasm_asset(Path(name): Path<String>) -> Result<Response, StatusCode> {
+    let media = match name.as_str() {
+        "pictorust_mls_web.js" => "text/javascript; charset=utf-8",
+        "pictorust_mls_web_bg.wasm" => "application/wasm",
+        _ => return Err(StatusCode::NOT_FOUND),
+    };
+    let directory = std::env::var("PICTORUST_MLS_ASSETS")
+        .unwrap_or_else(|_| "../mls-web/pkg".to_owned());
+    let bytes = tokio::fs::read(format!("{directory}/{name}"))
+        .await.map_err(|_| StatusCode::NOT_FOUND)?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, media)
+        .header(axum::http::header::CACHE_CONTROL, "no-store")
+        .header(axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .body(Body::from(bytes))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn mls_home() -> (
+    [(axum::http::header::HeaderName, &'static str); 5],
+    &'static str,
+) {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+            (axum::http::header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws://127.0.0.1:8787 ws://localhost:8787; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"),
+            (axum::http::header::REFERRER_POLICY, "no-referrer"),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        include_str!("../public/mls.html"),
+    )
+}
+
+async fn mls_app_module() -> (
+    [(axum::http::header::HeaderName, &'static str); 2],
+    &'static str,
+) {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        include_str!("../public/mls.mjs"),
+    )
+}
+
 async fn healthz() -> (
     [(axum::http::header::HeaderName, &'static str); 3],
     &'static str,
