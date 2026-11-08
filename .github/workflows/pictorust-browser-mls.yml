@@ -70,6 +70,7 @@ jobs:
           for attempt in $(seq 1 45); do
             if curl -fsS http://127.0.0.1:8787/mls/healthz >/dev/null; then
               node tests/browser-mls.mjs
+              node tests/browser-original-mls.mjs
               exit 0
             fi
             sleep 1
