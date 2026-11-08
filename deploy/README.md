@@ -37,6 +37,8 @@ same-origin Rust relay and Caddy on one machine; do not expose TCP 8787.
 
 ## Security architecture and limits
 
+- The server rejects all experimental v2 packets while a valid public TLS
+  origin is configured; only MLS-v3 is accepted over its public deployment.
 - WSS is automatically used under HTTPS. An exact, allowlisted
   `PICTORUST_PUBLIC_ORIGIN` is required for browsers; arbitrary browser
   `Origin` and duplicated origins are rejected. The reverse proxy runs on
@@ -49,10 +51,16 @@ same-origin Rust relay and Caddy on one machine; do not expose TCP 8787.
   while the owner is online. Share only over a trustworthy channel and
   confirm the inviter's identity there; the pinned key in the link does not
   authenticate the human sender of the link.
-- Refreshing or losing an MLS WebSocket fails closed. Clients currently need
-  a **fresh Welcome** and may still leave stale leaves; reliable resume
-  after missed Commits, durable storage, controlled group rejoin and
-  revocation under failure are NOT implemented.
+- A guest losing its live WebSocket makes at most **one bounded automatic
+  recovery attempt** while its owner remains online. It proves possession
+  of the previous member-only relay token, has its old MLS leaf removed and
+  revoked by the owner, then receives a new authenticated Welcome and fresh
+  member bearer. It never silently continues with an unverified old epoch.
+  All failed authentication/transport recovery is **fail-closed**.
+  Refreshing the page, losing the owner, losing the invitation secret,
+  restarting the server, recovering missed offline Commits, or attempting
+  a second recovery still requires a **fresh invitation**. There is no
+  durable MLS state, offline delivery or multi-device key backup.
 - Room-owner capabilities are held by the owner's browser, not ordinary
   invitees. If the owner's browser dies, the process-local owner-held
   group state is lost; restarting the server invalidates transient pending
