@@ -106,12 +106,12 @@ try{
  // Rejoin MUST rotate the guest's MLS identity, remove its old leaf,
  // revoke its old WebSocket bearer and verify the owner again.
  const oldBearer=await bob.evaluate(()=>window.__pictorustTestProtocols[0][1]);
- assert.match(oldBearer,/^auth\\.[0-9a-f]{64}$/);
+ assert.match(oldBearer,/^auth\.[0-9a-f]{64}$/);
  await bob.evaluate(()=>window.__pictorustTestSockets[0].close(4001,"transport-interruption"));
  await bob.waitForFunction(()=>document.querySelector("#status").textContent.includes("MLS wiederverbunden"),
    null,{timeout:45000});
  const newBearer=await bob.evaluate(()=>window.__pictorustTestProtocols.at(-1)[1]);
- assert.match(newBearer,/^auth\\.[0-9a-f]{64}$/);
+ assert.match(newBearer,/^auth\.[0-9a-f]{64}$/);
  assert.notEqual(newBearer,oldBearer,"a rejoin must receive a fresh relay bearer");
  const revokedRejected=await bob.evaluate(({room,oldBearer})=>new Promise(resolve=>{
    const url=(location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/"+room;
