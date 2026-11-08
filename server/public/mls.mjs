@@ -10,6 +10,7 @@ const MAX_WIRE = 16384;
 const message = text => { $("status").textContent = text; };
 const hex = bytes => Array.from(bytes, x => x.toString(16).padStart(2,"0")).join("");
 const fromBase64 = text => Uint8Array.from(atob(String(text).trim()), c=>c.charCodeAt(0));
+const fromHex = text => Uint8Array.from(text.match(/../g), part=>parseInt(part,16));
 const base64 = bytes => btoa(String.fromCharCode(...bytes));
 async function sha256(bytes) {
   return hex(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)));
@@ -152,6 +153,8 @@ $("join").addEventListener("click",async()=>{
     client.accept_welcome(welcome,tree);
     if(!client.members().some(member=>member.signatureKeyHex===pinned))
       throw Error("Verifizierter Gruppen-Ersteller nicht im signierten MLS-Baum");
+    // Enforced again in the Rust core on every MLS membership Commit.
+    client.pin_owner(fromHex(pinned));
     isOwner=false;
     $("own-signer").value=client.members().find(m=>m.credentialHex===hex(te.encode($("name").value.trim())))?.signatureKeyHex || "";
     await connect();
