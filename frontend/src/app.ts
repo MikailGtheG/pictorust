@@ -12,7 +12,10 @@ const volatileMessages=[];
 function clearLocalMessages(){messages.replaceChildren();localExportPages.replaceChildren();volatileMessages.length=0;lastReceivedData=null;}
 const canvas=$("drawing"),ctx=canvas.getContext("2d"),encoder=new TextEncoder(),decoder=new TextDecoder("utf-8",{fatal:true});
 let socket=null,strokes=[],current=null,roomKey=null,replayGuard=null,sessionIdentity=null,trustedPeers=null;
-const legacyMode=new URL(location.href).searchParams.get("legacy")==="1";
+// Never offer the older experimental v2 transport on a public HTTPS origin.
+// It remains available solely as an explicit localhost visual-regression mode.
+const legacyMode=["localhost","127.0.0.1"].includes(location.hostname)
+  && new URL(location.href).searchParams.get("legacy")==="1";
 let mls=null;
 const MAX_BYTES=16384,MAX_POINTS=1200;
 let totalPoints=0;
