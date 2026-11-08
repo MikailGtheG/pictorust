@@ -63,3 +63,39 @@ fn malformed_control_packets_rejected_before_mls_processing() {
     assert!(unwrap(&[3, KIND_KEY_PACKAGE, 9], KIND_COMMIT).is_err());
     assert!(unwrap(&[2, KIND_APPLICATION, 9], KIND_APPLICATION).is_err());
 }
+
+#[test]
+fn wire_invite_membership_and_rejoin_rejects_stale_client() {
+    let mut alice = Client::new(b"Alice").unwrap();
+    let mut bob = Client::new(b"Bob").unwrap();
+    let mut charlie = Client::new(b"Charlie").unwrap();
+    alice.start_group().unwrap();
+    let (bob_commit, bob_welcome, bob_tree) =
+        alice.add_wire(&bob.key_package_wire().unwrap()).unwrap();
+    assert!(!bob_commit.is_empty());
+    bob.accept_welcome_wire(&bob_welcome, &bob_tree).unwrap();
+    assert_eq!(bob.count().unwrap(), 2);
+    let (charlie_commit, charlie_welcome, charlie_tree) =
+        alice.add_wire(&charlie.key_package_wire().unwrap()).unwrap();
+    assert_eq!(bob.process(&charlie_commit, KIND_COMMIT).unwrap(), Incoming::MembershipChanged);
+    charlie.accept_welcome_wire(&charlie_welcome, &charlie_tree).unwrap();
+    let member_list = alice.members().unwrap();
+    assert_eq!(member_list.len(), 3);
+    assert!(member_list.iter().all(|(_, credential, key)| !credential.is_empty() && !key.is_empty()));
+    let bob_leaf = bob.own_leaf().unwrap().u32();
+    assert!(alice.remove_leaf(4000000).is_err());
+    assert!(alice.remove_leaf(alice.own_leaf().unwrap().u32()).is_err());
+    let eviction = alice.remove_leaf(bob_leaf).unwrap();
+    assert_eq!(charlie.process(&eviction, KIND_COMMIT).unwrap(), Incoming::MembershipChanged);
+    assert_eq!(bob.process(&eviction, KIND_COMMIT).unwrap(), Incoming::Removed);
+    assert!(!bob.active());
+    assert!(bob.send(b"revoked").is_err());
+    let new_epoch = alice.send(b"post-removal").unwrap();
+    assert_eq!(charlie.process(&new_epoch, KIND_APPLICATION).unwrap(),
+        Incoming::Application(b"post-removal".to_vec()));
+    assert!(bob.process(&new_epoch, KIND_APPLICATION).is_err());
+    charlie.mark_transport_interrupted();
+    assert!(!charlie.synchronized());
+    assert!(charlie.send(b"stale").is_err());
+    assert!(charlie.process(&new_epoch, KIND_APPLICATION).is_err());
+}
