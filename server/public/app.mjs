@@ -352,6 +352,11 @@ $("erase").addEventListener("click",clearLocalMessages);
 window.addEventListener("beforeunload",closeActive);
 if(!legacyMode){
   // No new visible controls, no changes to the sprite stage or keyboard layout.
+  // Legacy warnings describe a transport that this page no longer uses.
+  for(const note of document.querySelectorAll(".warning")){
+    if(note.textContent.includes("KLASSISCHER MODUS") ||
+       note.textContent.includes("Zum neuen OpenMLS-WASM"))note.hidden=true;
+  }
   for(const id of ["e2ee-key","own-fingerprint","trusted-fingerprints"]){
     const node=$(id);if(node)node.closest(".settings > div")?.setAttribute("hidden","");
   }
