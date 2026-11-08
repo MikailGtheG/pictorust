@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PictoRust – MLS Gruppenmodus (Entwicklung)</title>
+<style>
+@font-face{font-family:nds;src:url("/original/nds.ttf") format("truetype")}
+:root{font-family:nds,"Courier New",monospace;color:#202335;background:#dedee8}
+*{box-sizing:border-box}body{max-width:850px;margin:20px auto;padding:10px}
+h1{font-size:24px}h2{font-size:17px}p,button,label,input,textarea,select{font-size:13px}
+fieldset{border:2px solid #8586a6;background:#f6f6fc;margin:12px 0;padding:12px}
+legend{font-size:15px;font-weight:bold}label{display:block;margin:6px 0}
+input,textarea,select{width:100%;padding:8px;border:1px solid #8c8eaa;background:white;color:#191929;font-family:monospace}
+textarea{min-height:75px;resize:vertical}
+button{background:#c0c3e2;border:1px solid #6b709a;color:#191929;padding:8px;cursor:pointer;margin:4px}
+button:disabled{opacity:.5}
+#feed{min-height:160px;max-height:380px;overflow:auto;background:white;border:2px solid #999dc4;padding:10px}
+.entry{border:1px solid #999dc4;background:repeating-linear-gradient(white 0 21px,#e5e7f4 22px);margin:5px 0;padding:8px;white-space:pre-wrap;overflow-wrap:anywhere}
+#status{background:#edf0ff;border-left:4px solid #65699c;padding:12px;min-height:40px}
+.warning{background:#fff2de;border-left:4px solid #b48042;padding:12px}
+#members{font-family:monospace;overflow-wrap:anywhere;font-size:11px}
+.inline{display:flex;gap:8px;flex-wrap:wrap}.inline>*{flex:1}
+</style></head><body>
+<h1>PictoRust · OpenMLS Gruppenmodus</h1>
+<p class="warning">Experimentelle Browser-WASM-Integration, nur lokal. Einladungen und Identitätsfingerprints müssen über einen unabhängig verifizierten Kanal ausgetauscht werden. Kein sicherheitsgeprüfter Messenger.</p>
+<p id="status" role="status">WASM wird geladen …</p>
+<fieldset><legend>1 · Eigene Identität und Raum</legend>
+<label>Nickname <input id="name" maxlength="50" value="Gast" autocomplete="off"></label>
+<label>Raum-ID <input id="room" maxlength="32" autocomplete="off" spellcheck="false"></label>
+<label>Raum-Zugangstoken <input id="token" maxlength="64" autocomplete="off" spellcheck="false"></label>
+<div class="inline"><button id="new-room">Neuen Raum erstellen</button><button id="start">Gruppe als Ersteller starten</button><button id="reset">Alle lokalen Sitzungsdaten löschen</button></div>
+<label>Mein öffentlicher MLS-KeyPackage-Fingerprint (SHA-256) <input id="mine" readonly></label>
+<label>Meine MLS-Signaturschlüssel-ID für verifizierten Beitritt <input id="own-signer" readonly></label>
+<label>Mein öffentliches einmaliges KeyPackage für Administrator <textarea id="own-package" readonly></textarea></label>
+</fieldset>
+<fieldset><legend>2 · Gruppe beitreten</legend>
+<label>Extern erhaltene Welcome-Einladung (JSON; Welcome + Ratchet Tree) <textarea id="welcome" spellcheck="false"></textarea></label>
+<label>Extern geprüfter Signaturschlüssel des Gruppenerstellers (Hex) <input id="trusted-owner" spellcheck="false" autocomplete="off"></label>
+<button id="join">Welcome authentifiziert prüfen und beitreten</button>
+</fieldset>
+<fieldset><legend>3 · Mitglieder verwalten (nur Ersteller-Oberfläche)</legend>
+<label>Öffentliches KeyPackage des eingeladenen Geräts <textarea id="invite-package" spellcheck="false"></textarea></label>
+<label>Über zweiten Kanal bestätigter SHA-256-Fingerprint dieses KeyPackage <input id="verified-fingerprint" spellcheck="false" autocomplete="off"></label>
+<button id="admit">Verifiziertes Mitglied hinzufügen</button>
+<label>Neue einmalige Welcome-Einladung: getrennt und vertraulich an Mitglied übergeben <textarea id="issued-welcome" readonly></textarea></label>
+<div id="members">Noch keine Mitglieder.</div>
+<label>Auszuschließendes MLS-Mitglied <select id="remove-leaf"><option value="">Bitte Mitglied wählen</option></select></label>
+<button id="remove">Mitglied ausschließen und Epoche wechseln</button>
+</fieldset>
+<fieldset><legend>4 · Verschlüsselter Gruppenchat</legend>
+<div id="feed" role="log" aria-live="polite"></div>
+<label>Nachricht <textarea id="message" maxlength="1900"></textarea></label>
+<button id="send" disabled>MLS-verschlüsselt senden</button>
+</fieldset>
+<a href="/">Zur klassischen PictoRust-Oberfläche</a>
+<script type="module" src="/mls/app.mjs"></script>
+</body></html>

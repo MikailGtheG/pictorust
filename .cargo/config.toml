@@ -1,0 +1,4 @@
+# RustCrypto dependencies use getrandom 0.3 with an explicit browser
+# randomness backend; target-specific so the native relay is unchanged.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

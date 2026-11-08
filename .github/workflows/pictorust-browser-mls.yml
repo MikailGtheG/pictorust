@@ -1,0 +1,111 @@
+name: PictoRust browser OpenMLS WASM integration
+
+on:
+  push:
+    branches:
+      - development/pictochat-modernization
+    paths:
+      - 'mls-lab/**'
+      - 'mls-web/**'
+      - 'server/**'
+      - '.github/workflows/pictorust-browser-mls.yml'
+  pull_request:
+    paths:
+      - 'mls-lab/**'
+      - 'mls-web/**'
+      - 'server/**'
+      - '.github/workflows/pictorust-browser-mls.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pictorust-browser-mls-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wasm-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            mls-lab
+            mls-web
+            server
+      - name: Compile OpenMLS WASM target and verify native API
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path mls-lab/Cargo.toml --test client_api
+          cargo check --manifest-path mls-web/Cargo.toml --target wasm32-unknown-unknown
+      - name: Install pinned wasm-pack
+        run: cargo install wasm-pack --version 0.13.1 --locked
+      - name: Generate real browser-loadable OpenMLS package
+        run: |
+          wasm-pack build mls-web --target web --release --out-dir pkg
+          test -s mls-web/pkg/pictorust_mls_web.js
+          test -s mls-web/pkg/pictorust_mls_web_bg.wasm
+      - name: Install Chromium and build relay
+        working-directory: server
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1
+          npx playwright install --with-deps chromium
+          cargo build --bin pictochat-relay
+      - name: Execute real two-browser MLS group test
+        working-directory: server
+        env:
+          PICTOCHAT_RELAY_SECRET: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+          PICTORUST_PUBLIC_ORIGIN: 'https://localhost:9443'
+        run: |
+          set -euo pipefail
+          mkdir -p screenshots/mls
+          target/debug/pictochat-relay > screenshots/mls/relay.log 2>&1 &
+          relay_pid=$!
+          trap 'kill "$relay_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8787/mls/healthz >/dev/null; then
+              node tests/browser-mls.mjs
+              node tests/browser-original-mls.mjs
+              # Real HTTPS/WSS smoke using a short-lived self-signed test
+              # certificate; the production TLS terminator is Caddy.
+              openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+                -keyout "$RUNNER_TEMP/pictorust-tls.key" \
+                -out "$RUNNER_TEMP/pictorust-tls.crt" \
+                -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost" \
+                >/dev/null 2>&1
+              PICTORUST_TEST_TLS_KEY="$RUNNER_TEMP/pictorust-tls.key" \
+              PICTORUST_TEST_TLS_CERT="$RUNNER_TEMP/pictorust-tls.crt" \
+                node tests/https-wss-proxy.mjs >screenshots/mls/tls-proxy.log 2>&1 &
+              tls_pid=$!
+              trap 'kill "$tls_pid" "$relay_pid" 2>/dev/null || true' EXIT
+              for tls_attempt in $(seq 1 30); do
+                if curl -kfsS https://localhost:9443/mls/healthz >/dev/null; then
+                  PICTORUST_E2E_ORIGIN=https://localhost:9443 node tests/browser-original-mls.mjs
+                  exit 0
+                fi
+                sleep 1
+              done
+              cat screenshots/mls/tls-proxy.log
+              exit 1
+            fi
+            sleep 1
+          done
+          cat screenshots/mls/relay.log
+          exit 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pictorust-browser-mls-${{ github.run_id }}
+          path: |
+            server/screenshots/mls/*.png
+            server/screenshots/mls/*.pdf
+            server/screenshots/mls/relay.log
+            server/screenshots/mls/tls-proxy.log
+          retention-days: 10
+          if-no-files-found: warn

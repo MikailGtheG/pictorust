@@ -1,0 +1,24 @@
+# TLS terminates at Caddy; the Rust MLS relay never binds publicly.
+# Set PICTORUST_DOMAIN=chat.example.org in Caddy's systemd environment.
+# No untrusted X-Forwarded-Host/Proto headers are consumed by the relay.
+{$PICTORUST_DOMAIN} {
+    encode zstd gzip
+    request_body {
+        max_size 48KB
+    }
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        -Server
+    }
+    reverse_proxy 127.0.0.1:8787 {
+        header_up Host {host}
+        header_up -X-Forwarded-Host
+        header_up -X-Forwarded-Proto
+        header_up -X-Forwarded-For
+    }
+    # Do not enable access logging by default: even temporary credential
+    # headers must not be copied into persistent log files.
+
+}
