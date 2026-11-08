@@ -2,6 +2,8 @@
 //! Client-side experimental AES-GCM with bearer room admission. No verified identities,
 //! automatic key distribution, forward secrecy, or TLS yet.
 mod admissions;
+mod invites;
+use invites::InviteBroker;
 use admissions::MembershipAdmissions;
 use std::{net::SocketAddr, sync::{Arc, Mutex}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 use rand::{rngs::OsRng, RngCore};
@@ -10,7 +12,7 @@ use axum::{body::Body, response::Response};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, State,
+        Path, State, Json,
     },
     http::{header::{AUTHORIZATION, ORIGIN, SEC_WEBSOCKET_PROTOCOL}, HeaderMap, StatusCode},
     routing::{get, post},
@@ -32,6 +34,7 @@ struct AppState {
     auth: Arc<RoomAuth>,
     issuance: Arc<Mutex<RoomIssuanceQuota>>,
     admissions: Arc<MembershipAdmissions>,
+    invitations: Arc<InviteBroker>,
 }
 
 // Global, bounded, process-local admission throttle. An unauthenticated caller
@@ -100,6 +103,7 @@ async fn main() -> std::io::Result<()> {
         auth,
         issuance: Arc::new(Mutex::new(RoomIssuanceQuota::new())),
             admissions: Arc::new(MembershipAdmissions::default()),
+            invitations: Arc::new(InviteBroker::default()),
     };
     let app = router(state);
     // Bind exclusively to loopback until the protocol is authenticated and E2EE.
@@ -161,6 +165,11 @@ fn router(state: AppState) -> Router {
         .route("/new-room", post(create_temporary_room))
         .route("/mls/invite/{room_id}/{leaf}", post(issue_mls_member))
         .route("/mls/revoke/{room_id}/{leaf}", post(revoke_mls_member))
+        .route("/mls/join/register/{room_id}", post(register_join_link))
+        .route("/mls/join/request/{room_id}", post(request_join))
+        .route("/mls/join/pending/{room_id}", get(pending_joins))
+        .route("/mls/join/complete/{room_id}/{id}", post(complete_join))
+        .route("/mls/join/result/{room_id}/{id}", post(join_result))
         .route("/ws/{room_id}", get(connect))
         .with_state(state)
 }
@@ -384,6 +393,89 @@ fn owner_http_authorized(headers: &HeaderMap, room: &str, auth: &RoomAuth) -> bo
         .is_some_and(|token|auth.verify(room,token))
 }
 
+
+#[derive(serde::Deserialize)]
+struct JoinSecret { secret: String }
+#[derive(serde::Deserialize)]
+struct JoinSubmission { secret: String, key_package: String }
+#[derive(serde::Serialize,serde::Deserialize)]
+struct JoinCompletion { welcome: String, tree: String, token: String }
+#[derive(serde::Serialize)]
+struct JoinReceipt { id: String }
+#[derive(serde::Serialize)]
+struct PendingJoin { id: String, key_package: String }
+
+fn owner_join_authorized(headers: &HeaderMap,room:&str,state:&AppState)->bool{
+    origin_is_allowed(headers) && !temporary_room_is_expired(room) &&
+    owner_http_authorized(headers,room,&state.auth)
+}
+
+async fn register_join_link(
+    State(state):State<AppState>,Path(room_id):Path<String>,
+    headers:HeaderMap,Json(data):Json<JoinSecret>
+)->Result<StatusCode,StatusCode>{
+    if !owner_join_authorized(&headers,&room_id,&state){return Err(StatusCode::FORBIDDEN);}
+    state.invitations.register(&room_id,&data.secret).map_err(|_|StatusCode::BAD_REQUEST)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn request_join(
+    State(state):State<AppState>,Path(room_id):Path<String>,headers:HeaderMap,
+    Json(data):Json<JoinSubmission>
+)->Result<Json<JoinReceipt>,StatusCode>{
+    if !origin_is_allowed(&headers) || temporary_room_is_expired(&room_id){
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let id=state.invitations.request(&room_id,&data.secret,&data.key_package)
+        .map_err(|_|StatusCode::FORBIDDEN)?;
+    Ok(Json(JoinReceipt{id}))
+}
+
+async fn pending_joins(
+    State(state):State<AppState>,Path(room_id):Path<String>,headers:HeaderMap
+)->Result<Json<Vec<PendingJoin>>,StatusCode>{
+    if !owner_join_authorized(&headers,&room_id,&state){return Err(StatusCode::FORBIDDEN);}
+    Ok(Json(state.invitations.pending(&room_id).into_iter().map(|(id,key_package)|
+        PendingJoin{id,key_package}).collect()))
+}
+
+async fn complete_join(
+    State(state):State<AppState>,Path((room_id,id)):Path<(String,String)>,
+    headers:HeaderMap,Json(data):Json<JoinCompletion>
+)->Result<StatusCode,StatusCode>{
+    if !owner_join_authorized(&headers,&room_id,&state){return Err(StatusCode::FORBIDDEN);}
+    if data.welcome.len()>16000 || data.tree.len()>16000 || !data.welcome.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'+'||b==b'/'||b==b'=') ||
+       !data.tree.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'+'||b==b'/'||b==b'=') ||
+       data.token.len()!=64 || !data.token.bytes().all(|b|b.is_ascii_hexdigit()){
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let payload=serde_json::to_string(&data)
+        .map_err(|_|StatusCode::BAD_REQUEST)?;
+    state.invitations.complete(&room_id,&id,&payload)
+        .map_err(|_|StatusCode::CONFLICT)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn join_result(
+    State(state):State<AppState>,Path((room_id,id)):Path<(String,String)>,
+    headers:HeaderMap,Json(data):Json<JoinSecret>
+)->Result<axum::response::Response,StatusCode>{
+    if !origin_is_allowed(&headers) || temporary_room_is_expired(&room_id){
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let result=state.invitations.result(&room_id,&id,&data.secret)
+        .map_err(|_|StatusCode::FORBIDDEN)?;
+    match result {
+        Some(payload)=>Response::builder().status(StatusCode::OK)
+            .header(axum::http::header::CONTENT_TYPE,"application/json; charset=utf-8")
+            .header(axum::http::header::CACHE_CONTROL,"no-store")
+            .body(Body::from(payload)).map_err(|_|StatusCode::INTERNAL_SERVER_ERROR),
+        None=>Response::builder().status(StatusCode::ACCEPTED)
+            .header(axum::http::header::CACHE_CONTROL,"no-store")
+            .body(Body::empty()).map_err(|_|StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
 async fn issue_mls_member(
     State(state): State<AppState>,
     Path((room_id,leaf)): Path<(String,u32)>,
@@ -589,6 +681,7 @@ mod tests {
             auth: Arc::new(RoomAuth::from_hex(&"11".repeat(32)).unwrap()),
             issuance: Arc::new(Mutex::new(RoomIssuanceQuota::new())),
             admissions: Arc::new(MembershipAdmissions::default()),
+            invitations: Arc::new(InviteBroker::default()),
         };
         for _ in 0..MAX_ROOM_CREATIONS_PER_MINUTE {
             assert!(create_temporary_room(State(state.clone()), HeaderMap::new()).await.is_ok());
@@ -641,6 +734,7 @@ mod tests {
             auth: auth.clone(),
             issuance: Arc::new(Mutex::new(RoomIssuanceQuota::new())),
             admissions: Arc::new(MembershipAdmissions::default()),
+            invitations: Arc::new(InviteBroker::default()),
         };
         // Create a valid temporary room whose six-hour lifetime ends shortly.
         let created = unix_seconds().saturating_sub(TEMP_ROOM_TTL_SECONDS - 3);
@@ -675,6 +769,7 @@ mod tests {
             auth,
             issuance: Arc::new(Mutex::new(RoomIssuanceQuota::new())),
             admissions: Arc::new(MembershipAdmissions::default()),
+            invitations: Arc::new(InviteBroker::default()),
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -719,6 +814,7 @@ mod tests {
             auth: auth.clone(),
             issuance: Arc::new(Mutex::new(RoomIssuanceQuota::new())),
             admissions: Arc::new(MembershipAdmissions::default()),
+            invitations: Arc::new(InviteBroker::default()),
         };
         let (_, json) = create_temporary_room(State(state), HeaderMap::new()).await.unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
