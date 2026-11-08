@@ -21,10 +21,13 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '7.5.1'
       - name: Compile and run JUnit regression tests
         run: |
-          chmod +x ./gradlew
-          ./gradlew --no-daemon clean test build
+          # Use setup-gradle's managed distribution instead of the old wrapper
+          # downloader, whose hard-coded short socket timeout fails on CI.
+          gradle --no-daemon clean test build
       - name: Verify browser JavaScript syntax
         run: node --check src/main/resources/www/main.js
       - name: Verify default HTML does not import remote captcha
