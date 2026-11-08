@@ -1,6 +1,8 @@
 //! Development-only loopback WebSocket relay.
 //! Client-side experimental AES-GCM with bearer room admission. No verified identities,
 //! automatic key distribution, forward secrecy, or TLS yet.
+mod admissions;
+use admissions::MembershipAdmissions;
 use std::{net::SocketAddr, sync::{Arc, Mutex}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 use rand::{rngs::OsRng, RngCore};
 use rust_embed::RustEmbed;
@@ -10,13 +12,13 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, State,
     },
-    http::{header::{ORIGIN, SEC_WEBSOCKET_PROTOCOL}, HeaderMap, StatusCode},
+    http::{header::{AUTHORIZATION, ORIGIN, SEC_WEBSOCKET_PROTOCOL}, HeaderMap, StatusCode},
     routing::{get, post},
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use pictochat_relay::{auth::RoomAuth, Rooms, MAX_FRAME_BYTES};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{watch, OwnedSemaphorePermit, Semaphore};
 
 const MAX_CONNECTIONS: usize = 128;
 const MAX_MESSAGES_PER_SECOND: u32 = 20;
@@ -29,6 +31,7 @@ struct AppState {
     slots: Arc<Semaphore>,
     auth: Arc<RoomAuth>,
     issuance: Arc<Mutex<RoomIssuanceQuota>>,
+    admissions: Arc<MembershipAdmissions>,
 }
 
 // Global, bounded, process-local admission throttle. An unauthenticated caller
@@ -96,6 +99,7 @@ async fn main() -> std::io::Result<()> {
         slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
         auth,
         issuance: Arc::new(Mutex::new(RoomIssuanceQuota::new())),
+            admissions: Arc::new(MembershipAdmissions::default()),
     };
     let app = router(state);
     // Bind exclusively to loopback until the protocol is authenticated and E2EE.
@@ -154,6 +158,8 @@ fn router(state: AppState) -> Router {
         .route("/pictorust-export.mjs", get(pictorust_export_module))
         .route("/identity.mjs", get(identity_module))
         .route("/new-room", post(create_temporary_room))
+        .route("/mls/invite/{room_id}/{leaf}", post(issue_mls_member))
+        .route("/mls/revoke/{room_id}/{leaf}", post(revoke_mls_member))
         .route("/ws/{room_id}", get(connect))
         .with_state(state)
 }
@@ -342,6 +348,48 @@ async fn create_temporary_room(
     ))
 }
 
+// The sole room owner capability is never delivered to group members.
+// A random per-leaf MLS bearer is minted only when the owner provides its
+// distinct HMAC room capability in the Authorization header.
+fn owner_http_authorized(headers: &HeaderMap, room: &str, auth: &RoomAuth) -> bool {
+    let mut iter=headers.get_all(AUTHORIZATION).iter();
+    let (Some(value),None)=(iter.next(),iter.next()) else {return false;};
+    value.to_str().ok().and_then(|text|text.strip_prefix("Bearer "))
+        .is_some_and(|token|auth.verify(room,token))
+}
+
+async fn issue_mls_member(
+    State(state): State<AppState>,
+    Path((room_id,leaf)): Path<(String,u32)>,
+    headers: HeaderMap,
+) -> Result<([(axum::http::header::HeaderName, &'static str);2],String),StatusCode> {
+    if !origin_is_allowed(&headers) || temporary_room_is_expired(&room_id)
+        || !owner_http_authorized(&headers,&room_id,&state.auth) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let token=state.admissions.mint(&room_id,leaf)
+        .map_err(|_|StatusCode::CONFLICT)?;
+    Ok(([
+        (axum::http::header::CONTENT_TYPE,"application/json; charset=utf-8"),
+        (axum::http::header::CACHE_CONTROL,"no-store"),
+    ],format!("{{\"token\":\"{token}\",\"leaf\":{leaf}}}")))
+}
+
+async fn revoke_mls_member(
+    State(state): State<AppState>,
+    Path((room_id,leaf)): Path<(String,u32)>,
+    headers: HeaderMap,
+) -> Result<StatusCode,StatusCode> {
+    if !origin_is_allowed(&headers)
+        || !owner_http_authorized(&headers,&room_id,&state.auth) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if !state.admissions.revoke(&room_id,leaf) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn connect(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
@@ -351,9 +399,13 @@ async fn connect(
     if !origin_is_allowed(&headers) {
         return Err(StatusCode::FORBIDDEN);
     }
-    if temporary_room_is_expired(&room_id) || !room_capability_valid(&headers, &room_id, &state.auth) {
-        return Err(StatusCode::FORBIDDEN);
-    }
+    if temporary_room_is_expired(&room_id) {return Err(StatusCode::FORBIDDEN);}
+    let revoked = if room_capability_valid(&headers, &room_id, &state.auth) {
+        None // owner/admin token, never shared with participants
+    } else {
+        let token=requested_capability(&headers).ok_or(StatusCode::FORBIDDEN)?;
+        Some(state.admissions.verify(&room_id, token).ok_or(StatusCode::FORBIDDEN)?)
+    };
     let permit = state.slots.clone().try_acquire_owned()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let room = state.rooms.join(&room_id).map_err(|_| StatusCode::BAD_REQUEST)?;
@@ -364,10 +416,10 @@ async fn connect(
     let time_to_live = temporary_room_deadline(&room_id)
         .map(|deadline| Duration::from_secs(deadline.saturating_sub(unix_seconds())));
     Ok(ws.protocols(["picto.v1"]).max_message_size(MAX_FRAME_BYTES).max_frame_size(MAX_FRAME_BYTES)
-        .on_upgrade(move |socket| session(socket, room, receiver, permit, room_permit, time_to_live)))
+        .on_upgrade(move |socket| session(socket, room, receiver, permit, room_permit, time_to_live, revoked)))
 }
 
-async fn session(socket: WebSocket, room: Arc<pictochat_relay::Room>, mut receiver: tokio::sync::broadcast::Receiver<Vec<u8>>, _permit: OwnedSemaphorePermit, _room_permit: OwnedSemaphorePermit, time_to_live: Option<Duration>) {
+async fn session(socket: WebSocket, room: Arc<pictochat_relay::Room>, mut receiver: tokio::sync::broadcast::Receiver<Vec<u8>>, _permit: OwnedSemaphorePermit, _room_permit: OwnedSemaphorePermit, time_to_live: Option<Duration>, revocation: Option<watch::Receiver<bool>>) {
     let (mut outgoing, mut incoming) = socket.split();
     let mut quota = MessageQuota::new();
     // Not even an already connected peer may extend a temporary room past expiry.
@@ -378,9 +430,21 @@ async fn session(socket: WebSocket, room: Arc<pictochat_relay::Room>, mut receiv
         }
     };
     tokio::pin!(expiry);
+    // Per-device bearer revocation immediately terminates an existing socket.
+    let revoked = async move {
+        match revocation {
+            Some(mut receiver) => {
+                if *receiver.borrow_and_update() {return;}
+                let _ = receiver.changed().await;
+            }
+            None => std::future::pending::<()>().await,
+        }
+    };
+    tokio::pin!(revoked);
     loop {
         tokio::select! {
             _ = &mut expiry => break,
+            _ = &mut revoked => break,
             received = incoming.next() => {
                 match received {
                     Some(Ok(Message::Binary(data))) => {
@@ -410,6 +474,10 @@ async fn session(socket: WebSocket, room: Arc<pictochat_relay::Room>, mut receiv
 // is echoed. The admission token is never placed in a URL or echoed to the client.
 // This is bearer-token room admission, not participant identity nor E2EE.
 fn room_capability_valid(headers: &HeaderMap, room: &str, auth: &RoomAuth) -> bool {
+    requested_capability(headers).is_some_and(|token|auth.verify(room,token))
+}
+
+fn requested_capability(headers: &HeaderMap) -> Option<&str> {
     let mut saw_protocol = false;
     let mut candidate: Option<&str> = None;
     for header in headers.get_all(SEC_WEBSOCKET_PROTOCOL).iter() {
@@ -426,7 +494,7 @@ fn room_capability_valid(headers: &HeaderMap, room: &str, auth: &RoomAuth) -> bo
             }
         }
     }
-    saw_protocol && candidate.is_some_and(|token| auth.verify(room, token))
+    if saw_protocol {candidate} else {None}
 }
 
 // Browsers always send Origin on WebSocket handshakes; CLI clients may omit it.
@@ -495,6 +563,7 @@ mod tests {
             slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
             auth: Arc::new(RoomAuth::from_hex(&"11".repeat(32)).unwrap()),
             issuance: Arc::new(Mutex::new(RoomIssuanceQuota::new())),
+            admissions: Arc::new(MembershipAdmissions::default()),
         };
         for _ in 0..MAX_ROOM_CREATIONS_PER_MINUTE {
             assert!(create_temporary_room(State(state.clone()), HeaderMap::new()).await.is_ok());
@@ -546,6 +615,7 @@ mod tests {
             slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
             auth: auth.clone(),
             issuance: Arc::new(Mutex::new(RoomIssuanceQuota::new())),
+            admissions: Arc::new(MembershipAdmissions::default()),
         };
         // Create a valid temporary room whose six-hour lifetime ends shortly.
         let created = unix_seconds().saturating_sub(TEMP_ROOM_TTL_SECONDS - 3);
@@ -579,6 +649,7 @@ mod tests {
             slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
             auth,
             issuance: Arc::new(Mutex::new(RoomIssuanceQuota::new())),
+            admissions: Arc::new(MembershipAdmissions::default()),
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -622,6 +693,7 @@ mod tests {
             slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
             auth: auth.clone(),
             issuance: Arc::new(Mutex::new(RoomIssuanceQuota::new())),
+            admissions: Arc::new(MembershipAdmissions::default()),
         };
         let (_, json) = create_temporary_room(State(state), HeaderMap::new()).await.unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
