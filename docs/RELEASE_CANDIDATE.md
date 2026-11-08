@@ -34,8 +34,12 @@ A successful GitHub action is necessary but not sufficient for a release.
       retire the v2 PSK default, and test multiple client/platform combinations.
 - [x] Enforce local verified-owner policy in Rust for local add/remove and
       MLS-authenticated incoming membership Commits; fail closed on disconnect.
-- [ ] Implement per-device relay authorization, revoke sockets/admission tokens
-      for evicted members, and confirm safe reconnect with missed Commits.
+- [x] Mint distinct random per-member relay tokens, enforce owner-only mint/revoke,
+      disconnect active revoked WebSockets, and deny subsequent handshakes.
+      Three-browser Chromium and native Rust admission tests cover this.
+- [ ] Verify ordering of eviction and relay revocation under network failures,
+      owner credential compromise, token expiry, and race conditions.
+- [ ] Confirm safe reconnect with missed Commits and authentic group recovery.
 - [ ] Replace manual out-of-band Welcome exchange with authenticated discovery
       and delivery that does not expose private MLS state or invites.
 - [ ] Independent cryptographic/security assessment, dependency and supply-chain
