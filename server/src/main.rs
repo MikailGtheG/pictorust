@@ -142,6 +142,7 @@ async fn original_picto_font() -> Result<Response, StatusCode> {
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(dev_home))
+        .route("/healthz", get(healthz))
         .route("/original/images/{name}", get(original_picto_image))
         .route("/original/nds.ttf", get(original_picto_font))
         .route("/crypto.mjs", get(crypto_module))
@@ -201,6 +202,21 @@ async fn crypto_module() -> ([(axum::http::header::HeaderName, &'static str); 2]
             (axum::http::header::CACHE_CONTROL, "no-store"),
         ],
         include_str!("../public/crypto.mjs"),
+    )
+}
+
+// Readiness is intentionally shallow: no room counts, capabilities or keys.
+async fn healthz() -> (
+    [(axum::http::header::HeaderName, &'static str); 3],
+    &'static str,
+) {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        "ok",
     )
 }
 
@@ -394,6 +410,15 @@ mod tests {
         assert!(!origin_is_allowed(&headers));
         headers.insert(ORIGIN, HeaderValue::from_static("http://localhost:8787"));
         assert!(origin_is_allowed(&headers));
+    }
+
+    #[tokio::test]
+    async fn readiness_endpoint_returns_no_sensitive_state() {
+        let (headers, body) = healthz().await;
+        assert_eq!(body, "ok");
+        assert_eq!(headers[0].1, "text/plain; charset=utf-8");
+        assert_eq!(headers[1].1, "no-store");
+        assert!(!body.contains("secret"));
     }
 
     #[test]
