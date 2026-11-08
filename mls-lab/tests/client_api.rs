@@ -99,3 +99,30 @@ fn wire_invite_membership_and_rejoin_rejects_stale_client() {
     assert!(charlie.send(b"stale").is_err());
     assert!(charlie.process(&new_epoch, KIND_APPLICATION).is_err());
 }
+
+#[test]
+fn verified_owner_policy_rejects_non_owner_membership_changes() {
+    let mut alice = Client::new(b"Alice").unwrap();
+    let mut bob = Client::new(b"Bob").unwrap();
+    let mut charlie = Client::new(b"Charlie").unwrap();
+    alice.start_group().unwrap();
+    let owner_key = alice.members().unwrap()[0].signature_key.clone();
+    let (_, bob_welcome, bob_tree) =
+        alice.add_wire(&bob.key_package_wire().unwrap()).unwrap();
+    bob.accept_welcome_wire(&bob_welcome, &bob_tree).unwrap();
+    assert!(bob.pin_group_owner(&[0u8; 32]).is_err());
+    bob.pin_group_owner(&owner_key).unwrap();
+    // Even if the JavaScript UI is bypassed, the Rust core rejects local add/remove.
+    assert!(bob.add_wire(&charlie.key_package_wire().unwrap()).is_err());
+    assert!(bob.remove_leaf(alice.own_leaf().unwrap().u32()).is_err());
+
+    let (add_commit, charlie_welcome, charlie_tree) =
+        alice.add_wire(&charlie.key_package_wire().unwrap()).unwrap();
+    assert_eq!(bob.process(&add_commit, KIND_COMMIT).unwrap(), Incoming::MembershipChanged);
+    charlie.accept_welcome_wire(&charlie_welcome, &charlie_tree).unwrap();
+    // Simulate an untrusted group member that produced its own valid MLS Commit.
+    // OpenMLS verifies the signature, but our app policy must refuse the author.
+    let rogue_commit = charlie.remove_leaf(bob.own_leaf().unwrap().u32()).unwrap();
+    assert!(bob.process(&rogue_commit, KIND_COMMIT).is_err());
+    assert!(alice.process(&rogue_commit, KIND_COMMIT).is_err());
+}
