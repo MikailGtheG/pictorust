@@ -65,6 +65,9 @@ pub struct Client {
     group: Option<MlsGroup>,
     // A disconnected client may have missed MLS commits; fail closed.
     synchronized: bool,
+    // Application-owned owner key. MLS authenticates the committer;
+    // our policy independently authorizes membership changes.
+    owner_key: Option<Vec<u8>>,
 }
 
 impl Client {
@@ -81,7 +84,7 @@ impl Client {
             credential: BasicCredential::new(label.to_vec()).into(),
             signature_key: signer.public().into(),
         };
-        Ok(Self { provider, signer, credential, group: None, synchronized: false })
+        Ok(Self { provider, signer, credential, group: None, synchronized: false, owner_key: None })
     }
 
     pub fn key_package(&self) -> ClientResult<KeyPackage> {
@@ -131,12 +134,16 @@ impl Client {
             &MlsGroupCreateConfig::default(), self.credential.clone()
         ).map_err(|_| "cannot create MLS group")?;
         self.group = Some(group);
+        self.owner_key = Some(self.signer.public().to_vec());
         self.synchronized = true;
         Ok(())
     }
 
     pub fn add(&mut self, package: &KeyPackage) -> ClientResult<(Vec<u8>, Vec<u8>)> {
         if !self.synchronized { return Err("group epoch may be stale; rejoin required"); }
+        if self.owner_key.as_ref().is_some_and(|key| key.as_slice() != self.signer.public()) {
+            return Err("only the verified owner may change group membership");
+        }
         let group = self.group.as_mut().ok_or("client needs a group")?;
         if !group.is_active() { return Err("client has been removed"); }
         let (commit, welcome, _) = group.add_members(
@@ -198,6 +205,18 @@ impl Client {
         if !group.is_active() { return Err("client has been removed"); }
         let processed = group.process_message(&self.provider, protocol)
             .map_err(|_| "MLS message invalid for this member or epoch")?;
+        // Check the MLS-authenticated committer's current signature key, not
+        // an untrusted nickname, claimed role or WebSocket bearer token.
+        if kind == KIND_COMMIT {
+            if let Some(ref owner_key) = self.owner_key {
+                let approved = match processed.sender() {
+                    Sender::Member(index) => group.members().any(|member|
+                        member.index == *index && member.signature_key == *owner_key),
+                    _ => false,
+                };
+                if !approved { return Err("unauthorized MLS membership Commit"); }
+            }
+        }
         match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(message) if kind == KIND_APPLICATION =>
                 Ok(Incoming::Application(message.into_bytes())),
@@ -213,6 +232,9 @@ impl Client {
 
     pub fn remove(&mut self, leaf: LeafNodeIndex) -> ClientResult<Vec<u8>> {
         if !self.synchronized { return Err("group epoch may be stale; rejoin required"); }
+        if self.owner_key.as_ref().is_some_and(|key| key.as_slice() != self.signer.public()) {
+            return Err("only the verified owner may change group membership");
+        }
         let group = self.group.as_mut().ok_or("group needed")?;
         if !group.is_active() { return Err("client has been removed"); }
         let (commit, _, _) = group.remove_members(&self.provider, &self.signer, &[leaf])
@@ -228,6 +250,19 @@ impl Client {
 
     /// Call as soon as transport drops or messages may have been missed.
     /// No server-held timestamps or unauthenticated epoch claim can clear this state.
+    /// Mandatory in the browser before sending or applying group Commits.
+    /// Caller obtains this Ed25519 signature-key fingerprint through an
+    /// independently authenticated channel. Membership alone is NOT proof.
+    pub fn pin_group_owner(&mut self, expected: &[u8]) -> ClientResult<()> {
+        if expected.len() != 32 { return Err("invalid owner signature-key length"); }
+        let group = self.group.as_ref().ok_or("group needed")?;
+        if !group.members().any(|member| member.signature_key == expected) {
+            return Err("owner signature key not in authenticated MLS group");
+        }
+        self.owner_key = Some(expected.to_vec());
+        Ok(())
+    }
+
     pub fn mark_transport_interrupted(&mut self) {
         self.synchronized = false;
     }
@@ -238,6 +273,7 @@ impl Client {
     pub fn abandon_group_for_rejoin(&mut self) {
         self.group = None;
         self.synchronized = false;
+        self.owner_key = None;
     }
 
     pub fn synchronized(&self) -> bool {
