@@ -18,7 +18,7 @@ try{
  await alice.locator("#new-room").click();
  await alice.waitForFunction(()=>document.querySelector("#token").value.length===64);
  await alice.locator("#connect").click();
- await alice.waitForFunction(()=>document.querySelector("#status").textContent.includes("OpenMLS"));
+ await alice.waitForFunction(()=>document.querySelector("#status").textContent.includes("MLS verschlüsselt"));
  await alice.locator("#security-panel summary").click();
  await alice.locator("#copy-invite").click();
  const invite=await alice.evaluate(()=>navigator.clipboard.readText());
