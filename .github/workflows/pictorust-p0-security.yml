@@ -1,0 +1,55 @@
+name: PictoRust P0 security checks
+
+on:
+  pull_request:
+    paths:
+      - "server/**"
+      - "mls-web/**"
+      - "mls-lab/**"
+      - "scripts/security/**"
+      - ".github/workflows/pictorust-p0-security.yml"
+  push:
+    branches: [master, development/p0-recovery-audit]
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-security:
+    name: Source security regression gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test sensitive-credential handling and fail-closed paths
+        run: node scripts/security/p0-contract.test.mjs
+      - name: Compile and check Rust transport boundaries
+        run: |
+          cargo test --manifest-path server/Cargo.toml --locked
+          cargo clippy --manifest-path server/Cargo.toml --all-targets --locked -- -D warnings
+
+  dependency-audit:
+    name: RustSec advisory audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install version-pinned cargo-audit
+        run: cargo install --locked cargo-audit --version 0.22.2
+      - name: Audit all committed lockfiles (do not silently waive advisories)
+        run: |
+          set -euo pipefail
+          for lockfile in server/Cargo.lock mls-web/Cargo.lock mls-lab/Cargo.lock; do
+            test -s "$lockfile"
+            cargo audit --file "$lockfile" --deny warnings
+          done
