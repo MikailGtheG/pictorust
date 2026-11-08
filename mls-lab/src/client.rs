@@ -2,7 +2,7 @@
 //! All externally influenced operations return errors rather than terminating the process.
 use openmls::prelude::{tls_codec::*, *};
 use openmls_basic_credential::SignatureKeyPair;
-use openmls_rust_crypto::OpenMlsRustCrypto;
+use crate::checkpoint::{Checkpoint,CheckpointProvider};
 
 pub const CIPHER_SUITE: Ciphersuite =
     Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
@@ -59,7 +59,8 @@ pub fn unwrap(frame: &[u8], kind: u8) -> ClientResult<MlsMessageIn> {
 }
 
 pub struct Client {
-    provider: OpenMlsRustCrypto,
+    provider: CheckpointProvider,
+    label: Vec<u8>,
     signer: SignatureKeyPair,
     credential: CredentialWithKey,
     group: Option<MlsGroup>,
@@ -75,7 +76,7 @@ impl Client {
         if label.is_empty() || label.len() > 64 {
             return Err("invalid ephemeral identity label");
         }
-        let provider = OpenMlsRustCrypto::default();
+        let provider = CheckpointProvider::default();
         let signer = SignatureKeyPair::new(CIPHER_SUITE.signature_algorithm())
             .map_err(|_| "cannot create signing identity")?;
         signer.store(provider.storage())
@@ -84,7 +85,57 @@ impl Client {
             credential: BasicCredential::new(label.to_vec()).into(),
             signature_key: signer.public().into(),
         };
-        Ok(Self { provider, signer, credential, group: None, synchronized: false, owner_key: None })
+        Ok(Self { provider, label: label.to_vec(), signer, credential, group: None, synchronized: false, owner_key: None })
+    }
+
+    /// Export a *plaintext* internal checkpoint. The caller MUST seal it
+    /// with authenticated encryption before writing to any persistent store,
+    /// and must commit it atomically before transmitting MLS ciphertext.
+    /// This is not safe to expose directly as a downloadable file.
+    pub fn checkpoint_bytes(&self) -> ClientResult<Vec<u8>> {
+        let group=self.group.as_ref().ok_or("group needed for checkpoint")?;
+        let snapshot=Checkpoint {
+            version:1,
+            label:self.label.clone(),
+            signer:serde_json::to_value(&self.signer)
+                .map_err(|_|"cannot serialize signing identity")?,
+            group_id:group.group_id().as_slice().to_vec(),
+            owner_key:self.owner_key.clone(),
+            storage:self.provider.keys()?,
+        };
+        snapshot.encode()
+    }
+
+    /// Restore the group but deliberately leave the transport UNSYNCHRONIZED.
+    /// A trusted, ordered catch-up / epoch comparison is required before
+    /// permitting any MLS send after restart; never resume from a bare blob.
+    pub fn restore_checkpoint_untrusted(bytes:&[u8])->ClientResult<Self> {
+        let snapshot=Checkpoint::decode(bytes)?;
+        let signer:SignatureKeyPair=serde_json::from_value(snapshot.signer)
+            .map_err(|_|"cannot restore signing identity")?;
+        let provider=CheckpointProvider::from_keys(snapshot.storage)?;
+        let group_id=GroupId::from(snapshot.group_id);
+        let group=MlsGroup::load(provider.storage(),&group_id)
+            .map_err(|_|"cannot load stored MLS group")?
+            .ok_or("checkpoint does not contain a full MLS group")?;
+        let credential=CredentialWithKey {
+            credential:BasicCredential::new(snapshot.label.clone()).into(),
+            signature_key:signer.public().into(),
+        };
+        if !group.members().any(|m|m.signature_key==signer.public()){
+            return Err("checkpoint identity not in authenticated group");
+        }
+        if let Some(ref owner)=snapshot.owner_key {
+            if !group.members().any(|m|m.signature_key==owner.as_slice()){
+                return Err("checkpoint group owner not in authenticated membership");
+            }
+        }
+        Ok(Self {
+            provider,signer,credential,
+            label:snapshot.label,group:Some(group),
+            owner_key:snapshot.owner_key,
+            synchronized:false,
+        })
     }
 
     pub fn key_package(&self) -> ClientResult<KeyPackage> {
