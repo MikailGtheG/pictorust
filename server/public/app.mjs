@@ -356,7 +356,7 @@ if(!legacyMode){
   // Legacy warnings describe a transport that this page no longer uses.
   for(const note of Array.from(document.querySelectorAll(".warning"))){
     if(note.textContent.includes("KLASSISCHER MODUS") ||
-       note.textContent.includes("Zum neuen OpenMLS-WASM"))note.hidden=true;
+       note.textContent.includes("Zum neuen OpenMLS-WASM"))note.setAttribute("hidden","");
   }
   for(const id of ["e2ee-key","own-fingerprint","trusted-fingerprints"]){
     const node=$(id);if(node)node.closest(".settings > div")?.setAttribute("hidden","");
