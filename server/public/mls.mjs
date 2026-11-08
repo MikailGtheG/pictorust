@@ -163,6 +163,7 @@ $("join").addEventListener("click",async()=>{
   }
 });
 $("admit").addEventListener("click",async()=>{
+  let changedEpoch=false;
   try {
     if(!isOwner || !client?.synchronized())throw Error("Nur aktiver Ersteller kann einladen");
     const packageBytes=fromBase64($("invite-package").value);
@@ -170,23 +171,26 @@ $("admit").addEventListener("click",async()=>{
     if(!/^[0-9a-f]{64}$/.test(expected) || await sha256(packageBytes)!==expected)
       throw Error("Verifizierter KeyPackage-Fingerprint stimmt nicht überein");
     const [commit,welcome,tree]=client.add_member(packageBytes);
+    changedEpoch=true;
     // Local MLS state already advanced. If relay publication fails, fail closed.
     transmit(commit);
     $("issued-welcome").value=JSON.stringify({v:1,welcome:base64(welcome),tree:base64(tree)});
     $("invite-package").value="";
     $("verified-fingerprint").value="";
     roster();
-  }catch(e){client?.mark_transport_interrupted();$("send").disabled=true;message("Hinzufügen fehlgeschlagen, Rejoin ggf. nötig: "+e.message);}
+  }catch(e){if(changedEpoch)client?.mark_transport_interrupted();$("send").disabled=!client?.synchronized();message("Hinzufügen fehlgeschlagen: "+e.message);}
 });
 $("remove").addEventListener("click",async()=>{
+  let changedEpoch=false;
   try {
     if(!isOwner || !client?.synchronized())throw Error("Erstellerberechtigung erforderlich");
     const leaf=Number($("remove-leaf").value);
     if(!Number.isSafeInteger(leaf)||$("remove-leaf").value==="")throw Error("Mitglied auswählen");
     const commit=client.remove_member(leaf);
+    changedEpoch=true;
     transmit(commit);
     roster();
-  }catch(e){client?.mark_transport_interrupted();$("send").disabled=true;message("Ausschluss fehlgeschlagen: "+e.message);}
+  }catch(e){if(changedEpoch)client?.mark_transport_interrupted();$("send").disabled=!client?.synchronized();message("Ausschluss fehlgeschlagen: "+e.message);}
 });
 $("send").addEventListener("click",()=>{
   try {
