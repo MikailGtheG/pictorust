@@ -4,6 +4,16 @@
 
 > **Original creator credit:** This project is derived from [ayunami2000/ayunpictojava](https://github.com/ayunami2000/ayunpictojava). The original Java/browser work, DS sprites and bundled font are retained with attribution. See [CREDITS.md](CREDITS.md) for rights and provenance; this fork is independent and unaffiliated with Nintendo.
 
+## Release candidate status
+
+The Rust relay is entering an **internal localhost-only `v0.2.0-rc.1`**
+verification phase. This is not a public release or a production-grade secure
+messenger. Review the [release checklist](docs/RELEASE_CANDIDATE.md), the
+[RC verification workflow](.github/workflows/pictorust-release-candidate.yml)
+and [real Chromium screenshot workflow](.github/workflows/pictochat-browser-screenshots.yml)
+before judging readiness. The binary is deliberately not published while
+upstream asset redistribution terms and the browser MLS security gates remain open.
+
 ## Visual verification
 
 The screenshot and PDF integration workflow renders a real two-peer browser session with the original DS assets, Unicode and drawings, then checks print pagination at A4 dimensions. Its review artifacts contain:
