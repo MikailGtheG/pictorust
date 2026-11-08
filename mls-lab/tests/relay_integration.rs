@@ -42,6 +42,11 @@ fn relay_transports_real_mls_welcome_application_and_removal_commit() {
     alice.merge_pending_commit(&ap).unwrap();
     let welcome_wire = frame(MLS_KIND_WELCOME, welcome.tls_serialize_detached().unwrap());
     shared.publish(welcome_wire.clone()).unwrap();
+    // A legacy browser packet cannot silently enter an MLS-epoch room.
+    assert_eq!(
+        shared.publish(vec![2u8; pictochat_relay::MIN_ENVELOPE_BYTES]).unwrap_err(),
+        "room protocol version mismatch"
+    );
     let welcome_recv = receiver.try_recv().unwrap();
     assert_eq!(welcome_recv, welcome_wire);
     let welcome = match parsed_frame(&welcome_recv, MLS_KIND_WELCOME).extract() {
