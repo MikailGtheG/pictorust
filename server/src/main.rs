@@ -627,17 +627,33 @@ fn requested_capability(headers: &HeaderMap) -> Option<&str> {
 // Browsers always send Origin on WebSocket handshakes; CLI clients may omit it.
 // This is CSWSH protection, NOT authentication or authorization.
 fn origin_is_allowed(headers: &HeaderMap) -> bool {
-    // Duplicate Origin fields must not be accepted, even if the first is valid.
-    // A single missing Origin is retained only for local CLI integration tests.
+    // Browser requests MUST carry an exact Origin. The missing-Origin exception
+    // remains for headless local CLI tests, never for untrusted web origins.
+    // No X-Forwarded-* trust: deployment terminates TLS at a loopback Caddy
+    // reverse proxy; spoofable forwarding headers are intentionally ignored.
     let mut origins = headers.get_all(ORIGIN).iter();
     match (origins.next(), origins.next()) {
         (None, None) => true,
-        (Some(origin), None) => matches!(
-            origin.to_str(),
-            Ok("http://127.0.0.1:8787" | "http://localhost:8787")
-        ),
+        (Some(origin), None) => {
+            let Ok(value) = origin.to_str() else { return false; };
+            if matches!(value, "http://127.0.0.1:8787" | "http://localhost:8787") {
+                return true;
+            }
+            // PICTORUST_PUBLIC_ORIGIN must be a single exact HTTPS origin;
+            // it must not include path, credentials, query, fragment or wildcard.
+            std::env::var("PICTORUST_PUBLIC_ORIGIN").ok().is_some_and(|configured|
+                valid_public_origin(&configured) && value == configured)
+        }
         _ => false,
     }
+}
+
+fn valid_public_origin(value: &str) -> bool {
+    let Some(host) = value.strip_prefix("https://") else { return false; };
+    !host.is_empty() && host.len() <= 253 &&
+    !host.contains(['/', '?', '#', '@', '\\', '%', ' ', '\t', '\n', '\r']) &&
+    host.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.' | b':')) &&
+    !host.starts_with('.') && !host.ends_with('.') && !host.starts_with('-')
 }
 
 #[cfg(test)]
@@ -646,6 +662,18 @@ mod tests {
     use axum::http::HeaderValue;
 
 
+
+    #[test]
+    fn configured_https_origin_is_strictly_validated() {
+        assert!(valid_public_origin("https://picto.example.org"));
+        assert!(valid_public_origin("https://picto.example.org:8443"));
+        for invalid in ["http://picto.example.org", "https://", "https://evil.example/path",
+            "https://user@picto.example.org", "https://*.example.org",
+            "https://evil.example?hi=1", "https://evil.example/#x",
+            "https://evil.example\\nX-Foo: bar"] {
+            assert!(!valid_public_origin(invalid), "accepted invalid origin: {invalid}");
+        }
+    }
 
     #[test]
     fn rejects_duplicate_or_foreign_websocket_origins() {
