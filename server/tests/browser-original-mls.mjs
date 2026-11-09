@@ -37,6 +37,16 @@ try{
  assert.match(invite,/#pictorust=mls1&room=/);
  assert.ok(!invite.includes("auth."),"never expose owner auth token");
  const ownerRoom=await alice.locator("#room").inputValue();
+ // Delay the first owner poll so the guest receives several HTTP 202
+ // responses before an authenticated Welcome exists.
+ let slowedFirstPoll=false;
+ await alice.route("**/mls/join/pending/**",async route=>{
+   if(!slowedFirstPoll){
+     slowedFirstPoll=true;
+     await new Promise(resolve=>setTimeout(resolve,1750));
+   }
+   await route.continue();
+ });
  await bob.goto(invite,{waitUntil:"domcontentloaded"});
  await bob.waitForFunction(()=>document.querySelector("#status").textContent.includes("Gruppenbeitritt erfolgreich"),null,{timeout:30000});
  assert.equal(await bob.locator("#room").inputValue(),ownerRoom);
