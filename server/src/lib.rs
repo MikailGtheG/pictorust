@@ -1,7 +1,9 @@
 //! Experimental in-memory transport with room-capability admission.
 //! NOT end-to-end encrypted. Never expose to untrusted networks.
 pub mod auth;
-use std::{collections::HashMap, sync::{Arc, Mutex, Weak}, time::{Duration, Instant}};
+use std::{collections::{HashMap, VecDeque}, sync::{Arc, Mutex, Weak}, time::{Duration, Instant}};
+use rand::{rngs::OsRng,RngCore};
+use serde::Serialize;
 use tokio::sync::{broadcast, OwnedSemaphorePermit, Semaphore};
 
 pub const MAX_FRAME_BYTES: usize = 16 * 1024;
@@ -20,6 +22,9 @@ pub const MAX_ACTIVE_ROOMS: usize = 256;
 pub const MAX_PARTICIPANTS_PER_ROOM: usize = 16;
 /// Aggregate room-wide quota, in addition to each socket's 20 frames/second.
 pub const MAX_ROOM_FRAMES_PER_SECOND: u32 = 64;
+// Volatile, ciphertext-only replay window. NOT durable offline synchronization.
+const MAX_REPLAY_FRAMES: usize = 64;
+const REPLAY_TTL: Duration = Duration::from_secs(30*60);
 
 pub struct Room {
     sender: broadcast::Sender<Vec<u8>>,
@@ -31,6 +36,9 @@ struct RoomIngressQuota {
     started: Instant,
     frames: u32,
     protocol: Option<u8>,
+    generation: String,
+    next_sequence: u64,
+    replay: VecDeque<ReplayFrame>,
 }
 
 impl RoomIngressQuota {
@@ -47,7 +55,48 @@ impl RoomIngressQuota {
     }
 }
 
+/// Never place plaintext, member tokens, invite secrets or MLS private state
+/// in the relay replay window. Clients authenticate their own MLS frames.
+#[derive(Clone,Serialize)]
+pub struct ReplayFrame {
+    pub sequence: u64,
+    pub wire_hex: String,
+    #[serde(skip)]
+    recorded: Instant,
+}
+
+#[derive(Serialize)]
+pub struct ReplaySnapshot {
+    pub generation: String,
+    pub first_sequence: u64,
+    pub latest_sequence: u64,
+    pub frames: Vec<ReplayFrame>,
+}
+
 impl Room {
+    /// Identify gaps or server restarts; never silently skip a missing
+    /// encrypted Commit. Without an authenticated client cursor, return
+    /// only metadata (a new member MUST join via Welcome).
+    pub fn replay_since(&self,cursor:Option<(&str,u64)>)->Result<ReplaySnapshot,&'static str>{
+        let mut state=self.ingress.lock().map_err(|_|"replay lock poisoned")?;
+        state.replay.retain(|entry|entry.recorded.elapsed()<REPLAY_TTL);
+        let latest=state.next_sequence-1;
+        let first=state.replay.front().map_or(latest.saturating_add(1),|x|x.sequence);
+        let frames=match cursor {
+            None=>Vec::new(),
+            Some((generation,sequence))=>{
+                if generation!=state.generation{return Err("replay generation mismatch");}
+                if sequence>latest{return Err("replay cursor from the future");}
+                if sequence.saturating_add(1)<first{return Err("replay gap: rejoin required");}
+                state.replay.iter().filter(|x|x.sequence>sequence).cloned().collect()
+            }
+        };
+        Ok(ReplaySnapshot{
+            generation:state.generation.clone(),
+            first_sequence:first,latest_sequence:latest,frames
+        })
+    }
+
     /// Reserve one live connection slot; releasing the permit frees it automatically.
     pub fn try_enter(&self) -> Result<OwnedSemaphorePermit, &'static str> {
         self.participants.clone().try_acquire_owned().map_err(|_| "room full")
@@ -74,8 +123,21 @@ impl Room {
             }
             if !ingress.permit(Instant::now()) { return Err("room publish quota exceeded"); }
             ingress.protocol = Some(version);
+            if version==MLS_FRAME_VERSION {
+                let sequence=ingress.next_sequence;
+                ingress.next_sequence=ingress.next_sequence.checked_add(1)
+                    .ok_or("replay sequence exhausted")?;
+                ingress.replay.retain(|entry|entry.recorded.elapsed()<REPLAY_TTL);
+                ingress.replay.push_back(ReplayFrame{
+                    sequence,wire_hex:hex::encode(&payload),recorded:Instant::now()
+                });
+                while ingress.replay.len()>MAX_REPLAY_FRAMES {
+                    ingress.replay.pop_front();
+                }
+            }
         }
-        // No persistence: if no receiver exists, the message is dropped.
+        // The live broadcast remains unchanged; an offline client must
+        // explicitly authenticate and reconcile a replay cursor before send.
         let _ = self.sender.send(payload);
         Ok(())
     }
@@ -131,6 +193,32 @@ mod tests {
         let frame = vec![2u8; MIN_ENVELOPE_BYTES];
         room.publish(frame.clone()).unwrap();
         assert_eq!(receiver.recv().await.unwrap(), frame);
+    }
+
+    #[test]
+    fn encrypted_replay_detects_gaps_restarts_and_future_cursors() {
+        let rooms=Rooms::default();
+        let room=rooms.join(ID).unwrap();
+        let empty=room.replay_since(None).unwrap();
+        assert_eq!(empty.latest_sequence,0);
+        assert!(empty.frames.is_empty(),"no cursor may reveal historical frames");
+        for i in 0..(MAX_REPLAY_FRAMES+3) {
+            room.publish(vec![3,MLS_KIND_APPLICATION,i as u8]).unwrap();
+        }
+        let snapshot=room.replay_since(None).unwrap();
+        assert_eq!(snapshot.latest_sequence,(MAX_REPLAY_FRAMES+3) as u64);
+        assert_eq!(snapshot.first_sequence,4);
+        assert!(room.replay_since(Some((&snapshot.generation,0))).is_err(),
+            "history truncation must fail closed, not skip a missed Commit");
+        assert!(room.replay_since(Some(("00000000000000000000000000000000",snapshot.latest_sequence))).is_err());
+        assert!(room.replay_since(Some((&snapshot.generation,snapshot.latest_sequence+1))).is_err());
+        let replay=room.replay_since(Some((&snapshot.generation,3))).unwrap();
+        assert_eq!(replay.frames.len(),MAX_REPLAY_FRAMES);
+        assert!(replay.frames.iter().all(|frame|frame.wire_hex.starts_with("0301")));
+        assert!(room.replay_since(Some((&snapshot.generation,snapshot.latest_sequence))).unwrap().frames.is_empty());
+        drop(room);
+        let recreated=rooms.join(ID).unwrap();
+        assert!(recreated.replay_since(Some((&snapshot.generation,snapshot.latest_sequence))).is_err());
     }
 
     #[test]
