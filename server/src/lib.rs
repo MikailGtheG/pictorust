@@ -24,6 +24,8 @@ pub const MAX_PARTICIPANTS_PER_ROOM: usize = 16;
 pub const MAX_ROOM_FRAMES_PER_SECOND: u32 = 64;
 // Volatile, ciphertext-only replay window. NOT durable offline synchronization.
 const MAX_REPLAY_FRAMES: usize = 64;
+// Worst-case memory: 256 active rooms × 128 KiB = 32 MiB ciphertext plus overhead.
+const MAX_REPLAY_BYTES: usize = 128 * 1024;
 const REPLAY_TTL: Duration = Duration::from_secs(30*60);
 
 pub struct Room {
@@ -39,6 +41,7 @@ struct RoomIngressQuota {
     generation: String,
     next_sequence: u64,
     replay: VecDeque<ReplayFrame>,
+    replay_bytes: usize,
 }
 
 impl RoomIngressQuota {
@@ -46,7 +49,8 @@ impl RoomIngressQuota {
         let mut nonce=[0u8;16];
         OsRng.fill_bytes(&mut nonce);
         Self { started:Instant::now(),frames:0,protocol:None,
-            generation:hex::encode(nonce),next_sequence:1,replay:VecDeque::new() }
+            generation:hex::encode(nonce),next_sequence:1,
+            replay:VecDeque::new(),replay_bytes:0 }
     }
 
     fn permit(&mut self, now: Instant) -> bool {
@@ -84,7 +88,11 @@ impl Room {
     /// only metadata (a new member MUST join via Welcome).
     pub fn replay_since(&self,cursor:Option<(&str,u64)>)->Result<ReplaySnapshot,&'static str>{
         let mut state=self.ingress.lock().map_err(|_|"replay lock poisoned")?;
-        state.replay.retain(|entry|entry.recorded.elapsed()<REPLAY_TTL);
+        while state.replay.front().is_some_and(|e|e.recorded.elapsed()>=REPLAY_TTL) {
+            if let Some(removed)=state.replay.pop_front() {
+                state.replay_bytes=state.replay_bytes.saturating_sub(removed.wire_hex.len()/2);
+            }
+        }
         let latest=state.next_sequence-1;
         let first=state.replay.front().map_or(latest.saturating_add(1),|x|x.sequence);
         let frames=match cursor {
@@ -132,12 +140,20 @@ impl Room {
                 let sequence=ingress.next_sequence;
                 ingress.next_sequence=ingress.next_sequence.checked_add(1)
                     .ok_or("replay sequence exhausted")?;
-                ingress.replay.retain(|entry|entry.recorded.elapsed()<REPLAY_TTL);
+                while ingress.replay.front().is_some_and(|entry|entry.recorded.elapsed()>=REPLAY_TTL) {
+                    if let Some(old)=ingress.replay.pop_front() {
+                        ingress.replay_bytes=ingress.replay_bytes.saturating_sub(old.wire_hex.len()/2);
+                    }
+                }
+                ingress.replay_bytes=ingress.replay_bytes.saturating_add(payload.len());
                 ingress.replay.push_back(ReplayFrame{
                     sequence,wire_hex:hex::encode(&payload),recorded:Instant::now()
                 });
-                while ingress.replay.len()>MAX_REPLAY_FRAMES {
-                    ingress.replay.pop_front();
+                while ingress.replay.len()>MAX_REPLAY_FRAMES ||
+                    ingress.replay_bytes>MAX_REPLAY_BYTES {
+                    if let Some(old)=ingress.replay.pop_front() {
+                        ingress.replay_bytes=ingress.replay_bytes.saturating_sub(old.wire_hex.len()/2);
+                    }
                 }
             }
         }
