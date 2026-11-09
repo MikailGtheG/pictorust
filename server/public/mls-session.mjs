@@ -132,6 +132,7 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
           onDisconnect?.();
           status("MLS-Verbindung verloren · neuer sicherer Gruppenbeitritt …");
           const previous=memberToken,invite=joinInvite;
+          const oldDevice=client?.own_signature_key_hex();
           ws=null;
           client?.dispose();client=null;
           sent.clear();processed.clear();receiveQueue=Promise.resolve();
@@ -139,6 +140,14 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
             await sleep(700);
             if(closed)return;
             await joinWithInvite(invite,previous);
+            // A revoked MLS device must not retain an obsolete encrypted
+            // checkpoint once the newly authenticated member is persisted.
+            if(validHex(oldDevice,64)){
+              const {deleteSealedCheckpoint}=await import("/mls/vault.mjs");
+              await deleteSealedCheckpoint({
+                room:invite.room,owner:invite.owner,device:oldDevice
+              });
+            }
             rejoining=false;
             status("MLS wiederverbunden · neue Schlüssel bestätigt");
           })().catch(e=>fail("Sichere Wiederverbindung fehlgeschlagen: "+(e?.message||String(e))));
