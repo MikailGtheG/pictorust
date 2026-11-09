@@ -341,6 +341,12 @@ impl Client {
         self.synchronized && self.group.as_ref().is_some_and(MlsGroup::is_active)
     }
 
+    /// Endpoint identity used to segregate sealed MLS state by device.
+    /// The signature-key public bytes are not secret and MUST NOT be used
+    /// as a bearer token or authorization proof.
+    pub fn own_signature_key(&self) -> &[u8] {
+        self.signer.public()
+    }
     pub fn own_leaf(&self) -> ClientResult<LeafNodeIndex> {
         Ok(self.group.as_ref().ok_or("group needed")?.own_leaf_index())
     }
