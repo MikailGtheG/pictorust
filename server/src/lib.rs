@@ -42,7 +42,12 @@ struct RoomIngressQuota {
 }
 
 impl RoomIngressQuota {
-    fn new() -> Self { Self { started: Instant::now(), frames: 0, protocol: None } }
+    fn new() -> Self {
+        let mut nonce=[0u8;16];
+        OsRng.fill_bytes(&mut nonce);
+        Self { started:Instant::now(),frames:0,protocol:None,
+            generation:hex::encode(nonce),next_sequence:1,replay:VecDeque::new() }
+    }
 
     fn permit(&mut self, now: Instant) -> bool {
         if now.duration_since(self.started) >= Duration::from_secs(1) {
