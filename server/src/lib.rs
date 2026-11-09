@@ -208,6 +208,12 @@ mod tests {
         assert_eq!(empty.latest_sequence,0);
         assert!(empty.frames.is_empty(),"no cursor may reveal historical frames");
         for i in 0..(MAX_REPLAY_FRAMES+3) {
+            if i==MAX_REPLAY_FRAMES {
+                // Advance only the test quota clock; the production limit
+                // remains 64 incoming frames per second per room.
+                room.ingress.lock().unwrap().started=
+                    Instant::now()-Duration::from_secs(1);
+            }
             room.publish(vec![3,MLS_KIND_APPLICATION,i as u8]).unwrap();
         }
         let snapshot=room.replay_since(None).unwrap();
