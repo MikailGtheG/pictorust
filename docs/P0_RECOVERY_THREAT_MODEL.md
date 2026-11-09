@@ -25,8 +25,15 @@ invariants. See:
   `server/public/mls-vault.mjs` seals bytes in IndexedDB using an
   origin-bound AES-GCM envelope, a nonextractable WebCrypto key and
   exclusive Web Locks. A separate browser regression checks reload,
-  integrity rejection, stale local cursor and deletion. **This vault is not
-  yet connected to the public chat's automatic resume path**.
+  integrity rejection, stale local cursor and deletion. The original chat
+  now **serializes MLS state mutations and seals each updated ratchet before
+  sending ciphertext or membership Commits**. If IndexedDB write-ahead
+  fails, the session fails closed and the unsent draft remains in the
+  original interface. Sealed storage records are separated by
+  **room + pinned owner + device signing-key identity**; old device state
+  is deleted only after a replacement member is authenticated and saved.
+  An authenticated, fully verified multi-epoch resume from those records
+  remains **unimplemented**.
 - `Room::replay_since` supplies an authenticated, bounded,
   **process-local** 64-frame ciphertext-only replay window with per-room
   random generation and monotonically increasing sequence numbers.
@@ -34,9 +41,11 @@ invariants. See:
   member and rejects missing history, wrong generation, future positions
   and invalid cursors. It does **not** survive server restarts or support
   multi-day absence.
-- The official MLS session remains unchanged until durable,
-  verifiable catch-up can be applied atomically. Neither a WebCrypto key
-  nor a server-supplied epoch alone prevents full IndexedDB rollback.
+- The official MLS session uses encrypted checkpoint write-ahead when
+  online, but still creates a fresh session on page load; it does not
+  trust stored key material to bypass Welcome and authenticated epoch
+  reconciliation. Neither a WebCrypto key nor a server-supplied epoch
+  alone prevents a full IndexedDB rollback.
 - The independent external security review remains **not performed**.
   RustSec advisories in `docs/SECURITY_P0_FINDINGS.md` are not waived.
 
