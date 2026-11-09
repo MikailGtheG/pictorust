@@ -177,6 +177,7 @@ fn router(state: AppState) -> Router {
         .route("/mls/join/pending/{room_id}", post(pending_joins))
         .route("/mls/join/complete/{room_id}/{id}", post(complete_join))
         .route("/mls/join/result/{room_id}/{id}", post(join_result))
+        .route("/mls/replay/{room_id}", post(replay_mls_frames))
         .route("/ws/{room_id}", get(connect))
         .layer(DefaultBodyLimit::max(48 * 1024))
         .with_state(state)
@@ -424,6 +425,42 @@ struct JoinCompletion { welcome: String, tree: String, token: String }
 struct JoinReceipt { id: String }
 #[derive(serde::Serialize)]
 struct PendingJoin { id: String, key_package: String, previous_leaf: Option<u32> }
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplayQuery {
+    generation: Option<String>,
+    after_sequence: Option<u64>,
+}
+
+async fn replay_mls_frames(
+    State(state):State<AppState>,Path(room_id):Path<String>,
+    headers:HeaderMap,Json(query):Json<ReplayQuery>
+)->Result<([(axum::http::header::HeaderName,&'static str);1],Json<pictochat_relay::ReplaySnapshot>),StatusCode>{
+    if !origin_is_allowed(&headers)||temporary_room_is_expired(&room_id){
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let mut authorizations=headers.get_all(AUTHORIZATION).iter();
+    let (Some(auth),None)=(authorizations.next(),authorizations.next()) else {
+        return Err(StatusCode::FORBIDDEN);
+    };
+    let bearer=auth.to_str().ok().and_then(|v|v.strip_prefix("Bearer "))
+        .ok_or(StatusCode::FORBIDDEN)?;
+    if !state.auth.verify(&room_id,bearer) &&
+       state.admissions.verify(&room_id,bearer).is_none(){
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let cursor=match(query.generation.as_deref(),query.after_sequence){
+        (None,None)=>None,
+        (Some(generation),Some(seq)) if generation.len()==32 &&
+          generation.bytes().all(|b|b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) =>
+            Some((generation,seq)),
+        _=>return Err(StatusCode::BAD_REQUEST),
+    };
+    let room=state.rooms.join(&room_id).map_err(|_|StatusCode::BAD_REQUEST)?;
+    let snapshot=room.replay_since(cursor).map_err(|_|StatusCode::CONFLICT)?;
+    Ok(([(axum::http::header::CACHE_CONTROL,"no-store")],Json(snapshot)))
+}
 
 fn owner_join_authorized(headers: &HeaderMap,room:&str,state:&AppState)->bool{
     origin_is_allowed(headers) && !temporary_room_is_expired(room) &&
