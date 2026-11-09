@@ -191,8 +191,15 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
       let joined=null;
       while(Date.now()<until&&!closed){
         await sleep(450);
-        const r=await post("/mls/join/result/"+invite.room+"/"+id,{secret:invite.secret});
+        const r=await fetch("/mls/join/result/"+invite.room+"/"+id,{
+          method:"POST",cache:"no-store",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({secret:invite.secret})
+        });
+        // 202 means the owner has not finished the authenticated Welcome.
+        // It is an expected poll result, never a fatal HTTP error.
         if(r.status===202)continue;
+        if(!r.ok)throw Error("MLS-Welcome-Abfrage "+r.status);
         joined=await r.json();break;
       }
       if(!joined)throw Error("Einladung abgelaufen. Gruppeninhaber muss online sein");
