@@ -139,6 +139,19 @@ try{
  await bob.locator("#send").click();
  await alice.locator("#messages").getByText("Antwort nach sicherer Wiederverbindung")
    .waitFor({timeout:12000});
+ // A storage failure must halt the real original chat BEFORE transmission:
+ // its ratchet advanced, so plaintext must never be sent with unsafe state.
+ await alice.evaluate(()=>{
+   window.indexedDB.open=()=>{throw Error("simulated encrypted vault outage");};
+ });
+ await alice.locator("#text").fill("MUST NOT REACH BOB");
+ await alice.locator("#send").click();
+ await alice.waitForFunction(()=>document.querySelector("#status").textContent.includes("Checkpoint"),
+   null,{timeout:12000});
+ assert.equal(await alice.locator("#text").inputValue(),"MUST NOT REACH BOB",
+   "unsafe MLS send must keep the original text draft for the user");
+ assert.equal((await bob.locator("#messages").textContent()).includes("MUST NOT REACH BOB"),false,
+   "a failed durable checkpoint MUST NOT transmit MLS ciphertext");
  assert.deepEqual(failures,[]);
  console.log("OpenMLS behind unchanged original DS UI: invitation, text, drawings, PDF and authenticated fresh-key recovery passed");
 }finally{await browser.close();}
