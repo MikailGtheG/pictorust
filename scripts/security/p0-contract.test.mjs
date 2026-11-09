@@ -35,6 +35,15 @@ test("offline or corrupt MLS states must not silently resume without an authenti
   assert.match(web,/client\.accept_welcome\(/);
   assert.match(web,/client\.pin_owner\(/);
 });
+test("outbound MLS ratchets are sealed before sending and storage failures close the session",()=>{
+  assert.match(web,/async function transmit\(bytes\)/);
+  assert.match(web,/await checkpoint\(\);[\s\S]*?ws\.send\(bytes\)/);
+  assert.match(web,/async send\(data\)/);
+  assert.match(web,/await transmit\(client\.send\(bytes\)\)/);
+  assert.match(web,/fail\("MLS-Checkpoint oder Versand fehlgeschlagen:/);
+  assert.match(web,/await serializeState\(async\(\)=>\{/);
+});
+
 test("public relay rejects legacy frames and original DS HTML stays the page",()=>{
   assert.match(relay,/frame_allowed_for_mode\(&data, require_mls_v3\)/);
   assert.match(relay,/include_str!\("\.\.\/public\/index\.html"\)/);
