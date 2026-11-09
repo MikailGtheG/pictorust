@@ -118,6 +118,9 @@ impl Client {
         let group=MlsGroup::load(provider.storage(),&group_id)
             .map_err(|_|"cannot load stored MLS group")?
             .ok_or("checkpoint does not contain a full MLS group")?;
+        if group.ciphersuite()!=CIPHER_SUITE {
+            return Err("unsupported restored MLS ciphersuite");
+        }
         let credential=CredentialWithKey {
             credential:BasicCredential::new(snapshot.label.clone()).into(),
             signature_key:signer.public().into(),
@@ -162,6 +165,9 @@ impl Client {
             .map_err(|_| "invalid key package TLS encoding")?;
         let package = package_in.validate(self.provider.crypto(), ProtocolVersion::Mls10)
             .map_err(|_| "invalid key package signature or lifetime")?;
+        if package.ciphersuite()!=CIPHER_SUITE {
+            return Err("unsupported MLS ciphersuite; only the reviewed X25519/Ed25519 suite is accepted");
+        }
         let (commit, welcome) = self.add(&package)?;
         let tree = self.ratchet_tree()?.tls_serialize_detached()
             .map_err(|_| "cannot serialize ratchet tree")?;
@@ -224,8 +230,12 @@ impl Client {
         let staged = StagedWelcome::new_from_welcome(
             &self.provider, &MlsGroupJoinConfig::default(), welcome, Some(tree)
         ).map_err(|_| "cannot authenticate MLS Welcome")?;
-        self.group = Some(staged.into_group(&self.provider)
-            .map_err(|_| "cannot join MLS group")?);
+        let group=staged.into_group(&self.provider)
+            .map_err(|_| "cannot join MLS group")?;
+        if group.ciphersuite()!=CIPHER_SUITE {
+            return Err("unsupported MLS Welcome ciphersuite");
+        }
+        self.group=Some(group);
         self.synchronized = true;
         Ok(())
     }
