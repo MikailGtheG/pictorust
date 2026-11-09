@@ -83,10 +83,10 @@ try{
     });
     db.close();
     let tamperDenied=false;
-    try{await vault.readSealedCheckpoint({room,owner});}
+    try{await vault.readSealedCheckpoint({room,owner,device});}
     catch{tamperDenied=true;}
     await vault.deleteSealedCheckpoint({room,owner,device});
-    const deleted=await vault.readSealedCheckpoint({room,owner});
+    const deleted=await vault.readSealedCheckpoint({room,owner,device});
     return {present:true,sameSigner,segregated,epoch,unsynchronized,blocked,
       tamperDenied,deleted:deleted===null};
   },metadata);
