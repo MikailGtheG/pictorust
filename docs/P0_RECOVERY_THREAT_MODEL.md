@@ -15,6 +15,31 @@ invariants. See:
 - https://docs.rs/openmls/latest/openmls/storage/index.html
 - https://docs.rs/openmls_rust_crypto/latest/openmls_rust_crypto/
 
+## Implementation checkpoint — 9 November 2026
+
+- `mls-lab/src/checkpoint.rs` and `Client::checkpoint_bytes` can snapshot
+  the actual OpenMLS provider keys, signing identity, group ID and pinned
+  owner key. `restore_checkpoint_untrusted` loads those values but stays
+  **unsynchronized and unable to send**; the native Rust roundtrip is green.
+- `mls-web/src/lib.rs` exports the corresponding WASM checkpoint API.
+  `server/public/mls-vault.mjs` seals bytes in IndexedDB using an
+  origin-bound AES-GCM envelope, a nonextractable WebCrypto key and
+  exclusive Web Locks. A separate browser regression checks reload,
+  integrity rejection, stale local cursor and deletion. **This vault is not
+  yet connected to the public chat's automatic resume path**.
+- `Room::replay_since` supplies an authenticated, bounded,
+  **process-local** 64-frame ciphertext-only replay window with per-room
+  random generation and monotonically increasing sequence numbers.
+  `POST /mls/replay/{room_id}` authorizes the room owner or a live
+  member and rejects missing history, wrong generation, future positions
+  and invalid cursors. It does **not** survive server restarts or support
+  multi-day absence.
+- The official MLS session remains unchanged until durable,
+  verifiable catch-up can be applied atomically. Neither a WebCrypto key
+  nor a server-supplied epoch alone prevents full IndexedDB rollback.
+- The independent external security review remains **not performed**.
+  RustSec advisories in `docs/SECURITY_P0_FINDINGS.md` are not waived.
+
 ## P0-1 — restart persistence
 
 Implementation specification:
