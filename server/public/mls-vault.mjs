@@ -11,8 +11,8 @@ function requireSecure(){
   if(!globalThis.isSecureContext||!crypto?.subtle||!navigator.locks)
     throw Error("Secure context, WebCrypto and Web Locks required");
 }
-function checkInfo({room,owner,epoch,sequence}){
-  if(!hex32.test(room)||!hex64.test(owner)||
+function checkInfo({room,owner,device,epoch,sequence}){
+  if(!hex32.test(room)||!hex64.test(owner)||!hex64.test(device)||
     !Number.isSafeInteger(epoch)||epoch<0||
     !Number.isSafeInteger(sequence)||sequence<0)
     throw Error("Invalid MLS checkpoint binding");
@@ -61,23 +61,24 @@ async function deviceKey(db){
   await finished(put);
   return key;
 }
-const recordId=(room,owner)=>room+":"+owner;
+const recordId=(room,owner,device)=>room+":"+owner+":"+device;
 const aad=meta=>encode.encode(JSON.stringify({
   product:"PictoRust MLS checkpoint",version:1,
-  origin:location.origin,room:meta.room,owner:meta.owner,
+  origin:location.origin,room:meta.room,owner:meta.owner,device:meta.device,
   epoch:meta.epoch,sequence:meta.sequence
 }));
 function validateRecord(record,expected){
   if(!record||record.version!==1||record.room!==expected.room||
-    record.owner!==expected.owner||record.origin!==location.origin||
+    record.owner!==expected.owner||record.device!==expected.device||
+    record.origin!==location.origin||
     !(record.iv instanceof Uint8Array)||
     !(record.ciphertext instanceof ArrayBuffer)||
     record.iv.length!==12||record.ciphertext.byteLength>MAX_BYTES+16)
     throw Error("Invalid sealed checkpoint metadata");
   checkInfo(record);
 }
-export async function saveSealedCheckpoint({room,owner,epoch,sequence,plaintext}){
-  requireSecure();checkInfo({room,owner,epoch,sequence});
+export async function saveSealedCheckpoint({room,owner,device,epoch,sequence,plaintext}){
+  requireSecure();checkInfo({room,owner,device,epoch,sequence});
   if(!(plaintext instanceof Uint8Array)||plaintext.length===0||
     plaintext.length>MAX_BYTES)throw Error("MLS checkpoint has invalid length");
   return navigator.locks.request("pictorust-vault:"+room,async()=>{
@@ -85,27 +86,27 @@ export async function saveSealedCheckpoint({room,owner,epoch,sequence,plaintext}
     try{
       const key=await deviceKey(db);
       const previous=await req(db.transaction("checkpoints","readonly")
-        .objectStore("checkpoints").get(recordId(room,owner)));
+        .objectStore("checkpoints").get(recordId(room,owner,device)));
       if(previous){
-        validateRecord(previous,{room,owner});
+        validateRecord(previous,{room,owner,device});
         if(epoch<previous.epoch||sequence<previous.sequence)
           throw Error("Local MLS checkpoint rollback denied");
       }
       const iv=crypto.getRandomValues(new Uint8Array(12));
-      const meta={room,owner,epoch,sequence};
+      const meta={room,owner,device,epoch,sequence};
       const ciphertext=await crypto.subtle.encrypt(
         {name:"AES-GCM",iv,additionalData:aad(meta)},key,plaintext);
       const tx=db.transaction("checkpoints","readwrite");
       tx.objectStore("checkpoints").put({
         version:1,origin:location.origin,...meta,iv,ciphertext
-      },recordId(room,owner));
+      },recordId(room,owner,device));
       await finished(tx);
     }finally{db.close();}
   });
 }
-export async function readSealedCheckpoint({room,owner}){
+export async function readSealedCheckpoint({room,owner,device}){
   requireSecure();
-  if(!hex32.test(room)||!hex64.test(owner))
+  if(!hex32.test(room)||!hex64.test(owner)||!hex64.test(device))
     throw Error("Invalid MLS checkpoint identity");
   return navigator.locks.request("pictorust-vault:"+room,async()=>{
     const db=await openDb();
@@ -113,7 +114,7 @@ export async function readSealedCheckpoint({room,owner}){
       const record=await req(db.transaction("checkpoints","readonly")
         .objectStore("checkpoints").get(recordId(room,owner)));
       if(!record)return null;
-      validateRecord(record,{room,owner});
+      validateRecord(record,{room,owner,device});
       const key=await deviceKey(db);
       let bytes;
       try{
@@ -130,7 +131,7 @@ export async function readSealedCheckpoint({room,owner}){
     }finally{db.close();}
   });
 }
-export async function deleteSealedCheckpoint({room,owner}){
+export async function deleteSealedCheckpoint({room,owner,device}){
   requireSecure();
   if(!hex32.test(room)||!hex64.test(owner))
     throw Error("Invalid MLS checkpoint identity");
@@ -138,7 +139,7 @@ export async function deleteSealedCheckpoint({room,owner}){
     const db=await openDb();
     try{
       const tx=db.transaction("checkpoints","readwrite");
-      tx.objectStore("checkpoints").delete(recordId(room,owner));
+      tx.objectStore("checkpoints").delete(recordId(room,owner,device));
       await finished(tx);
     }finally{db.close();}
   });
