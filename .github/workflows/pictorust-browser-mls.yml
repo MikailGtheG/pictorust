@@ -72,6 +72,7 @@ jobs:
               node tests/browser-mls.mjs
               node tests/browser-original-mls.mjs
               node tests/browser-owner-offline.mjs
+              node tests/browser-mls-replay.mjs
               # Restart as strict PUBLIC-mode relay before testing TLS.
               # Local integration runs intentionally allow CLI origin-less
               # probes, but the public service MUST forbid them.
@@ -100,6 +101,7 @@ jobs:
                 if curl -kfsS https://localhost:9443/mls/healthz >/dev/null; then
                   PICTORUST_E2E_ORIGIN=https://localhost:9443 node tests/browser-original-mls.mjs
                   PICTORUST_E2E_ORIGIN=https://localhost:9443 node tests/browser-owner-offline.mjs
+                  PICTORUST_E2E_ORIGIN=https://localhost:9443 node tests/browser-mls-replay.mjs
                   exit 0
                 fi
                 sleep 1
