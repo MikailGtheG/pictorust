@@ -67,7 +67,8 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
   }
   async function checkpoint(){
     const pinned=owner ? ownerKey : joinInvite?.owner;
-    if(!client||!client.synchronized()||!validHex(pinned,64))
+    const device=client?.own_signature_key_hex();
+    if(!client||!client.synchronized()||!validHex(pinned,64)||!validHex(device,64))
       throw Error("Cannot persist unauthenticated MLS group");
     if(!Number.isSafeInteger(checkpointRevision+1))
       throw Error("MLS checkpoint revision exhausted");
@@ -78,7 +79,7 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
       if(checkpointRevision===0){
         // A verified fresh Welcome may replace an older checkpoint, but
         // must NEVER roll the group back to an older MLS epoch.
-        const old=await readSealedCheckpoint({room:room(),owner:pinned});
+        const old=await readSealedCheckpoint({room:room(),owner:pinned,device});
         if(old){
           try{
             if(old.epoch>Number(client.epoch()))
@@ -88,7 +89,7 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
         }
       }
       await saveSealedCheckpoint({
-        room:room(),owner:pinned,epoch:Number(client.epoch()),
+        room:room(),owner:pinned,device,epoch:Number(client.epoch()),
         sequence:checkpointRevision+1,plaintext
       });
       checkpointRevision++;
@@ -306,14 +307,15 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
     active(){return !closed&&!!client?.synchronized()&&ws?.readyState===WebSocket.OPEN;},
     close(){
       if(pendingPoll)clearInterval(pendingPoll);
+      const device=client?.own_signature_key_hex();
       closed=true;ws?.close();client?.dispose();client=null;joinSecret=null;
       // An explicit logout must discard its stored recovery copy too.
       // Closing a browser/tab without calling close() preserves the copy.
       const pinned=owner?ownerKey:joinInvite?.owner;
       const id=room();
-      if(validHex(pinned,64)&&validHex(id,32)){
+      if(validHex(pinned,64)&&validHex(id,32)&&validHex(device,64)){
         import("/mls/vault.mjs").then(m=>m.deleteSealedCheckpoint({
-          room:id,owner:pinned
+          room:id,owner:pinned,device
         })).catch(()=>{});
       }
       joinInvite=null;memberToken=null;
