@@ -61,6 +61,15 @@ cover the original UI, OpenMLS invitations, drawings, PDF export,
 HTTPS/WSS transport, and one limited safe reconnect while the group
 owner remains online.
 
+The P0 development branch contains a **volatile ciphertext-only** relay
+replay window (64 frames, 128 KiB maximum per room, 30-minute TTL,
+whichever fills first). The server does not receive MLS plaintext, but
+does temporarily retain encrypted traffic in RAM. It is **not** durable,
+does not survive server restarts and is not yet the public default chat's
+trusted offline catch-up. The encrypted IndexedDB checkpoint vault in that
+branch is likewise experimental until authenticated epoch reconciliation
+is wired into the chat.
+
 A stable release still needs secure, durable MLS state recovery after
 browser restarts, long-offline synchronization, stronger identity
 verification, independent security assessment, and real-device
