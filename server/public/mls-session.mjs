@@ -73,7 +73,20 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
       throw Error("MLS checkpoint revision exhausted");
     const plaintext=client.checkpoint_plaintext();
     try{
-      const {saveSealedCheckpoint}=await import("/mls/vault.mjs");
+      const {saveSealedCheckpoint,readSealedCheckpoint}=
+        await import("/mls/vault.mjs");
+      if(checkpointRevision===0){
+        // A verified fresh Welcome may replace an older checkpoint, but
+        // must NEVER roll the group back to an older MLS epoch.
+        const old=await readSealedCheckpoint({room:room(),owner:pinned});
+        if(old){
+          try{
+            if(old.epoch>Number(client.epoch()))
+              throw Error("Refusing older MLS epoch than authenticated local checkpoint");
+            checkpointRevision=old.sequence;
+          }finally{old.plaintext.fill(0);}
+        }
+      }
       await saveSealedCheckpoint({
         room:room(),owner:pinned,epoch:Number(client.epoch()),
         sequence:checkpointRevision+1,plaintext
