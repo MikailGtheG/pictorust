@@ -110,6 +110,10 @@ impl BrowserMlsClient {
         Ok(out)
     }
 
+    pub fn own_signature_key_hex(&self) -> String {
+        hex::encode(self.client.own_signature_key())
+    }
+
     pub fn epoch(&self) -> Result<u64, JsValue> {
         self.client.epoch().map_err(failure)
     }
