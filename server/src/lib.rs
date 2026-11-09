@@ -249,6 +249,26 @@ mod tests {
     }
 
     #[test]
+    fn ciphertext_replay_memory_budget_is_bounded_and_truncation_is_visible() {
+        let room=Rooms::default().join(ID).unwrap();
+        for sequence in 0..18u8 {
+            let mut payload=vec![0x5a;15000];
+            payload[0]=MLS_FRAME_VERSION;
+            payload[1]=MLS_KIND_APPLICATION;
+            payload[2]=sequence;
+            room.publish(payload).unwrap();
+        }
+        let state=room.ingress.lock().unwrap();
+        assert!(state.replay_bytes<=MAX_REPLAY_BYTES);
+        assert!(state.replay.len()<18);
+        drop(state);
+        let latest=room.replay_since(None).unwrap();
+        assert!(latest.first_sequence>1);
+        assert!(room.replay_since(Some((&latest.generation,0))).is_err(),
+            "truncated MLS Commit history must never be silently skipped");
+    }
+
+    #[test]
     fn rejects_invalid_identifiers_and_frame_sizes() {
         let rooms = Rooms::default();
         assert!(rooms.join("../outside").is_err());
