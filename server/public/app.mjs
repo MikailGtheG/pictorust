@@ -325,7 +325,7 @@ $("send").addEventListener("click",async()=>{
   if(!draft.text.trim()&&!draft.strokes.length)return;
   try{
    if(!valid(draft))throw Error("Zeichnung oder Text ungültig");
-   mls.send(draft);
+   await mls.send(draft);
    $("text").value="";strokes=[];current=null;totalPoints=0;redraw();
   }catch(e){setStatus("MLS-Senden fehlgeschlagen: "+e.message);}
   return;
