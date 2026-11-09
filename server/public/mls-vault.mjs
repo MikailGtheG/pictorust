@@ -112,7 +112,7 @@ export async function readSealedCheckpoint({room,owner,device}){
     const db=await openDb();
     try{
       const record=await req(db.transaction("checkpoints","readonly")
-        .objectStore("checkpoints").get(recordId(room,owner)));
+        .objectStore("checkpoints").get(recordId(room,owner,device)));
       if(!record)return null;
       validateRecord(record,{room,owner,device});
       const key=await deviceKey(db);
