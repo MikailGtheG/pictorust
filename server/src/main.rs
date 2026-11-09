@@ -12,7 +12,7 @@ use axum::{body::Body, response::Response};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, State, Json,
+        Path, State, Json, DefaultBodyLimit,
     },
     http::{header::{AUTHORIZATION, ORIGIN, SEC_WEBSOCKET_PROTOCOL}, HeaderMap, StatusCode},
     routing::{get, post},
@@ -161,6 +161,7 @@ fn router(state: AppState) -> Router {
         .route("/mls/healthz", get(mls_readiness))
         .route("/mls/app.mjs", get(mls_app_module))
         .route("/mls/session.mjs", get(mls_session_module))
+        .route("/mls/vault.mjs", get(mls_vault_module))
         .route("/mls/pkg/{name}", get(mls_wasm_asset))
         .route("/original/images/{name}", get(original_picto_image))
         .route("/original/nds.ttf", get(original_picto_font))
@@ -174,10 +175,12 @@ fn router(state: AppState) -> Router {
         .route("/mls/revoke/{room_id}/{leaf}", post(revoke_mls_member))
         .route("/mls/join/register/{room_id}", post(register_join_link))
         .route("/mls/join/request/{room_id}", post(request_join))
-        .route("/mls/join/pending/{room_id}", get(pending_joins))
+        .route("/mls/join/pending/{room_id}", post(pending_joins))
         .route("/mls/join/complete/{room_id}/{id}", post(complete_join))
         .route("/mls/join/result/{room_id}/{id}", post(join_result))
+        .route("/mls/replay/{room_id}", post(replay_mls_frames))
         .route("/ws/{room_id}", get(connect))
+        .layer(DefaultBodyLimit::max(48 * 1024))
         .with_state(state)
 }
 
@@ -308,6 +311,15 @@ async fn mls_home() -> Response {
     serve_html(include_str!("../public/mls.html"),true)
 }
 
+async fn mls_vault_module() -> (
+    [(axum::http::header::HeaderName,&'static str);2],&'static str
+){
+    ([
+        (axum::http::header::CONTENT_TYPE,"text/javascript; charset=utf-8"),
+        (axum::http::header::CACHE_CONTROL,"no-store")
+    ],include_str!("../public/mls-vault.mjs"))
+}
+
 async fn mls_session_module() -> (
     [(axum::http::header::HeaderName, &'static str); 2], &'static str,
 ) {
@@ -423,6 +435,42 @@ struct JoinCompletion { welcome: String, tree: String, token: String }
 struct JoinReceipt { id: String }
 #[derive(serde::Serialize)]
 struct PendingJoin { id: String, key_package: String, previous_leaf: Option<u32> }
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplayQuery {
+    generation: Option<String>,
+    after_sequence: Option<u64>,
+}
+
+async fn replay_mls_frames(
+    State(state):State<AppState>,Path(room_id):Path<String>,
+    headers:HeaderMap,Json(query):Json<ReplayQuery>
+)->Result<([(axum::http::header::HeaderName,&'static str);1],Json<pictochat_relay::ReplaySnapshot>),StatusCode>{
+    if !origin_is_allowed(&headers)||temporary_room_is_expired(&room_id){
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let mut authorizations=headers.get_all(AUTHORIZATION).iter();
+    let (Some(auth),None)=(authorizations.next(),authorizations.next()) else {
+        return Err(StatusCode::FORBIDDEN);
+    };
+    let bearer=auth.to_str().ok().and_then(|v|v.strip_prefix("Bearer "))
+        .ok_or(StatusCode::FORBIDDEN)?;
+    if !state.auth.verify(&room_id,bearer) &&
+       state.admissions.verify(&room_id,bearer).is_none(){
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let cursor=match(query.generation.as_deref(),query.after_sequence){
+        (None,None)=>None,
+        (Some(generation),Some(seq)) if generation.len()==32 &&
+          generation.bytes().all(|b|b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) =>
+            Some((generation,seq)),
+        _=>return Err(StatusCode::BAD_REQUEST),
+    };
+    let room=state.rooms.join(&room_id).map_err(|_|StatusCode::BAD_REQUEST)?;
+    let snapshot=room.replay_since(cursor).map_err(|_|StatusCode::CONFLICT)?;
+    Ok(([(axum::http::header::CACHE_CONTROL,"no-store")],Json(snapshot)))
+}
 
 fn owner_join_authorized(headers: &HeaderMap,room:&str,state:&AppState)->bool{
     origin_is_allowed(headers) && !temporary_room_is_expired(room) &&
@@ -661,22 +709,23 @@ fn requested_capability(headers: &HeaderMap) -> Option<&str> {
 // Browsers always send Origin on WebSocket handshakes; CLI clients may omit it.
 // This is CSWSH protection, NOT authentication or authorization.
 fn origin_is_allowed(headers: &HeaderMap) -> bool {
-    // Browser requests MUST carry an exact Origin. The missing-Origin exception
-    // remains for headless local CLI tests, never for untrusted web origins.
-    // No X-Forwarded-* trust: deployment terminates TLS at a loopback Caddy
-    // reverse proxy; spoofable forwarding headers are intentionally ignored.
-    let mut origins = headers.get_all(ORIGIN).iter();
-    match (origins.next(), origins.next()) {
-        (None, None) => true,
-        (Some(origin), None) => {
-            let Ok(value) = origin.to_str() else { return false; };
-            if matches!(value, "http://127.0.0.1:8787" | "http://localhost:8787") {
-                return true;
-            }
-            // PICTORUST_PUBLIC_ORIGIN must be a single exact HTTPS origin;
-            // it must not include path, credentials, query, fragment or wildcard.
-            std::env::var("PICTORUST_PUBLIC_ORIGIN").ok().is_some_and(|configured|
-                valid_public_origin(&configured) && value == configured)
+    let configured=std::env::var("PICTORUST_PUBLIC_ORIGIN").ok()
+        .filter(|value|valid_public_origin(value));
+    origin_allowed_for_config(headers,configured.as_deref())
+}
+
+/// Missing Origin is supported for local CLI integration tests only.
+/// Public deployments require a single exact HTTPS Origin even for
+/// privileged JSON endpoints. Never trust spoofable X-Forwarded headers.
+fn origin_allowed_for_config(headers: &HeaderMap, public: Option<&str>) -> bool {
+    let mut origins=headers.get_all(ORIGIN).iter();
+    match (origins.next(),origins.next()) {
+        (None,None) => public.is_none(),
+        (Some(value),None) => {
+            let Ok(value)=value.to_str() else {return false;};
+            if public.is_some_and(|expected|value==expected) {return true;}
+            public.is_none() &&
+                matches!(value,"http://127.0.0.1:8787"|"http://localhost:8787")
         }
         _ => false,
     }
@@ -718,6 +767,19 @@ mod tests {
             "https://evil.example\\nX-Foo: bar"] {
             assert!(!valid_public_origin(invalid), "accepted invalid origin: {invalid}");
         }
+    }
+
+    #[test]
+    fn public_endpoints_require_a_single_matching_origin() {
+        let mut headers=HeaderMap::new();
+        assert!(!origin_allowed_for_config(&headers,Some("https://picto.example.org")));
+        assert!(origin_allowed_for_config(&headers,None));
+        headers.insert(ORIGIN,HeaderValue::from_static("http://localhost:8787"));
+        assert!(!origin_allowed_for_config(&headers,Some("https://picto.example.org")));
+        headers.insert(ORIGIN,HeaderValue::from_static("https://picto.example.org"));
+        assert!(origin_allowed_for_config(&headers,Some("https://picto.example.org")));
+        headers.append(ORIGIN,HeaderValue::from_static("https://picto.example.org"));
+        assert!(!origin_allowed_for_config(&headers,Some("https://picto.example.org")));
     }
 
     #[test]

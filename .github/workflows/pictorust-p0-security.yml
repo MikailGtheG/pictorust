@@ -1,0 +1,68 @@
+name: PictoRust P0 security checks
+
+on:
+  pull_request:
+    paths:
+      - "server/**"
+      - "mls-web/**"
+      - "mls-lab/**"
+      - "scripts/security/**"
+      - ".github/workflows/pictorust-p0-security.yml"
+  push:
+    branches: [master, development/p0-recovery-audit]
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-security:
+    name: Source security regression gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test sensitive-credential handling and fail-closed paths
+        run: node scripts/security/p0-contract.test.mjs
+      - name: Compile and check Rust transport boundaries
+        run: |
+          cargo generate-lockfile --manifest-path server/Cargo.toml
+          cargo test --manifest-path server/Cargo.toml --locked
+          cargo clippy --manifest-path server/Cargo.toml --all-targets --locked -- -D warnings
+
+  dependency-audit:
+    name: RustSec advisory audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install version-pinned cargo-audit
+        run: cargo install --locked cargo-audit --version 0.22.2
+      - name: Audit each generated lockfile (do not silently waive advisories)
+        run: |
+          set -euo pipefail
+          failures=0
+          for manifest in server/Cargo.toml mls-web/Cargo.toml mls-lab/Cargo.toml; do
+            cargo generate-lockfile --manifest-path "$manifest"
+            lockfile="$(dirname "$manifest")/Cargo.lock"
+            test -s "$lockfile"
+            echo "::group::Dependency paths for $manifest"
+            cargo tree --manifest-path "$manifest" --edges normal -i libcrux-kem || true
+            cargo tree --manifest-path "$manifest" --edges normal -i crypto-bigint || true
+            cargo tree --manifest-path "$manifest" --edges normal -i proc-macro-error2 || true
+            echo "::endgroup::"
+            if ! cargo audit --file "$lockfile" --deny warnings; then
+              failures=$((failures+1))
+            fi
+          done
+          echo "RustSec manifests with findings: $failures"
+          test "$failures" -eq 0

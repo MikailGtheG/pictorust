@@ -61,7 +61,6 @@ jobs:
         working-directory: server
         env:
           PICTOCHAT_RELAY_SECRET: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-          PICTORUST_PUBLIC_ORIGIN: 'https://localhost:9443'
         run: |
           set -euo pipefail
           mkdir -p screenshots/mls
@@ -72,6 +71,21 @@ jobs:
             if curl -fsS http://127.0.0.1:8787/mls/healthz >/dev/null; then
               node tests/browser-mls.mjs
               node tests/browser-original-mls.mjs
+              node tests/browser-owner-offline.mjs
+              node tests/browser-mls-replay.mjs
+              node tests/browser-mls-vault.mjs
+              # Restart as strict PUBLIC-mode relay before testing TLS.
+              # Local integration runs intentionally allow CLI origin-less
+              # probes, but the public service MUST forbid them.
+              kill "$relay_pid"
+              wait "$relay_pid" 2>/dev/null || true
+              PICTORUST_PUBLIC_ORIGIN=https://localhost:9443 \
+                target/debug/pictochat-relay > screenshots/mls/relay-public.log 2>&1 &
+              relay_pid=$!
+              for public_attempt in $(seq 1 30); do
+                curl -fsS http://127.0.0.1:8787/mls/healthz >/dev/null && break
+                sleep 1
+              done
               # Real HTTPS/WSS smoke using a short-lived self-signed test
               # certificate; the production TLS terminator is Caddy.
               openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
@@ -87,6 +101,9 @@ jobs:
               for tls_attempt in $(seq 1 30); do
                 if curl -kfsS https://localhost:9443/mls/healthz >/dev/null; then
                   PICTORUST_E2E_ORIGIN=https://localhost:9443 node tests/browser-original-mls.mjs
+                  PICTORUST_E2E_ORIGIN=https://localhost:9443 node tests/browser-owner-offline.mjs
+                  PICTORUST_E2E_ORIGIN=https://localhost:9443 node tests/browser-mls-replay.mjs
+                  PICTORUST_E2E_ORIGIN=https://localhost:9443 node tests/browser-mls-vault.mjs
                   exit 0
                 fi
                 sleep 1
@@ -106,6 +123,7 @@ jobs:
             server/screenshots/mls/*.png
             server/screenshots/mls/*.pdf
             server/screenshots/mls/relay.log
+            server/screenshots/mls/relay-public.log
             server/screenshots/mls/tls-proxy.log
           retention-days: 10
           if-no-files-found: warn

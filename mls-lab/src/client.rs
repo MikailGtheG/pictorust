@@ -2,7 +2,7 @@
 //! All externally influenced operations return errors rather than terminating the process.
 use openmls::prelude::{tls_codec::*, *};
 use openmls_basic_credential::SignatureKeyPair;
-use openmls_rust_crypto::OpenMlsRustCrypto;
+use crate::checkpoint::{Checkpoint,CheckpointProvider};
 
 pub const CIPHER_SUITE: Ciphersuite =
     Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
@@ -59,7 +59,8 @@ pub fn unwrap(frame: &[u8], kind: u8) -> ClientResult<MlsMessageIn> {
 }
 
 pub struct Client {
-    provider: OpenMlsRustCrypto,
+    provider: CheckpointProvider,
+    label: Vec<u8>,
     signer: SignatureKeyPair,
     credential: CredentialWithKey,
     group: Option<MlsGroup>,
@@ -75,7 +76,7 @@ impl Client {
         if label.is_empty() || label.len() > 64 {
             return Err("invalid ephemeral identity label");
         }
-        let provider = OpenMlsRustCrypto::default();
+        let provider = CheckpointProvider::default();
         let signer = SignatureKeyPair::new(CIPHER_SUITE.signature_algorithm())
             .map_err(|_| "cannot create signing identity")?;
         signer.store(provider.storage())
@@ -84,7 +85,60 @@ impl Client {
             credential: BasicCredential::new(label.to_vec()).into(),
             signature_key: signer.public().into(),
         };
-        Ok(Self { provider, signer, credential, group: None, synchronized: false, owner_key: None })
+        Ok(Self { provider, label: label.to_vec(), signer, credential, group: None, synchronized: false, owner_key: None })
+    }
+
+    /// Export a *plaintext* internal checkpoint. The caller MUST seal it
+    /// with authenticated encryption before writing to any persistent store,
+    /// and must commit it atomically before transmitting MLS ciphertext.
+    /// This is not safe to expose directly as a downloadable file.
+    pub fn checkpoint_bytes(&self) -> ClientResult<Vec<u8>> {
+        let group=self.group.as_ref().ok_or("group needed for checkpoint")?;
+        let snapshot=Checkpoint {
+            version:1,
+            label:self.label.clone(),
+            signer:serde_json::to_value(&self.signer)
+                .map_err(|_|"cannot serialize signing identity")?,
+            group_id:group.group_id().as_slice().to_vec(),
+            owner_key:self.owner_key.clone(),
+            storage:self.provider.keys()?,
+        };
+        snapshot.encode()
+    }
+
+    /// Restore the group but deliberately leave the transport UNSYNCHRONIZED.
+    /// A trusted, ordered catch-up / epoch comparison is required before
+    /// permitting any MLS send after restart; never resume from a bare blob.
+    pub fn restore_checkpoint_untrusted(bytes:&[u8])->ClientResult<Self> {
+        let snapshot=Checkpoint::decode(bytes)?;
+        let signer:SignatureKeyPair=serde_json::from_value(snapshot.signer)
+            .map_err(|_|"cannot restore signing identity")?;
+        let provider=CheckpointProvider::from_keys(snapshot.storage)?;
+        let group_id=GroupId::from_slice(&snapshot.group_id);
+        let group=MlsGroup::load(provider.storage(),&group_id)
+            .map_err(|_|"cannot load stored MLS group")?
+            .ok_or("checkpoint does not contain a full MLS group")?;
+        if group.ciphersuite()!=CIPHER_SUITE {
+            return Err("unsupported restored MLS ciphersuite");
+        }
+        let credential=CredentialWithKey {
+            credential:BasicCredential::new(snapshot.label.clone()).into(),
+            signature_key:signer.public().into(),
+        };
+        if !group.members().any(|m|m.signature_key==signer.public()){
+            return Err("checkpoint identity not in authenticated group");
+        }
+        if let Some(ref owner)=snapshot.owner_key {
+            if !group.members().any(|m|m.signature_key==owner.as_slice()){
+                return Err("checkpoint group owner not in authenticated membership");
+            }
+        }
+        Ok(Self {
+            provider,signer,credential,
+            label:snapshot.label,group:Some(group),
+            owner_key:snapshot.owner_key,
+            synchronized:false,
+        })
     }
 
     pub fn key_package(&self) -> ClientResult<KeyPackage> {
@@ -111,6 +165,9 @@ impl Client {
             .map_err(|_| "invalid key package TLS encoding")?;
         let package = package_in.validate(self.provider.crypto(), ProtocolVersion::Mls10)
             .map_err(|_| "invalid key package signature or lifetime")?;
+        if package.ciphersuite()!=CIPHER_SUITE {
+            return Err("unsupported MLS ciphersuite; only the reviewed X25519/Ed25519 suite is accepted");
+        }
         let (commit, welcome) = self.add(&package)?;
         let tree = self.ratchet_tree()?.tls_serialize_detached()
             .map_err(|_| "cannot serialize ratchet tree")?;
@@ -173,8 +230,12 @@ impl Client {
         let staged = StagedWelcome::new_from_welcome(
             &self.provider, &MlsGroupJoinConfig::default(), welcome, Some(tree)
         ).map_err(|_| "cannot authenticate MLS Welcome")?;
-        self.group = Some(staged.into_group(&self.provider)
-            .map_err(|_| "cannot join MLS group")?);
+        let group=staged.into_group(&self.provider)
+            .map_err(|_| "cannot join MLS group")?;
+        if group.ciphersuite()!=CIPHER_SUITE {
+            return Err("unsupported MLS Welcome ciphersuite");
+        }
+        self.group=Some(group);
         self.synchronized = true;
         Ok(())
     }
@@ -280,6 +341,12 @@ impl Client {
         self.synchronized && self.group.as_ref().is_some_and(MlsGroup::is_active)
     }
 
+    /// Endpoint identity used to segregate sealed MLS state by device.
+    /// The signature-key public bytes are not secret and MUST NOT be used
+    /// as a bearer token or authorization proof.
+    pub fn own_signature_key(&self) -> &[u8] {
+        self.signer.public()
+    }
     pub fn own_leaf(&self) -> ClientResult<LeafNodeIndex> {
         Ok(self.group.as_ref().ok_or("group needed")?.own_leaf_index())
     }
@@ -315,5 +382,31 @@ impl Client {
 
     pub fn ratchet_tree(&self) -> ClientResult<RatchetTreeIn> {
         Ok(self.group.as_ref().ok_or("group needed")?.export_ratchet_tree().into())
+    }
+}
+
+
+// Deliberately fail-closed checkpoint research: no resumed send without
+// a verified ordered catch-up. Ciphertext is never kept in this snapshot.
+#[cfg(test)]
+mod checkpoint_tests {
+    use super::*;
+    #[test]
+    fn snapshot_restores_group_but_does_not_authorize_stale_epoch_sends() {
+        let mut alice=Client::new(b"Alice").unwrap();
+        alice.start_group().unwrap();
+        let epoch=alice.epoch().unwrap();
+        let signing_key=alice.members().unwrap()[0].signature_key.clone();
+        let bytes=alice.checkpoint_bytes().unwrap();
+        assert!(!bytes.is_empty());
+        let mut restored=Client::restore_checkpoint_untrusted(&bytes).unwrap();
+        assert_eq!(restored.epoch().unwrap(),epoch);
+        assert_eq!(restored.members().unwrap()[0].signature_key,signing_key);
+        assert!(!restored.synchronized(),"restored state must start unsynchronized");
+        assert!(restored.send(b"must wait for authenticated catchup").is_err());
+        assert!(Client::restore_checkpoint_untrusted(b"{}").is_err());
+        let mut corrupt=bytes;
+        corrupt[0]^=0xff;
+        assert!(Client::restore_checkpoint_untrusted(&corrupt).is_err());
     }
 }

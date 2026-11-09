@@ -22,6 +22,22 @@ impl BrowserMlsClient {
         Ok(Self { client: Client::new(label.as_bytes()).map_err(failure)? })
     }
 
+    /// Plaintext is returned only to an endpoint-managed authenticated
+    /// encryption vault. NEVER send this snapshot to the relay or expose it
+    /// in logs. The original chat does not enable automatic restore yet.
+    pub fn checkpoint_plaintext(&self) -> Result<Vec<u8>, JsValue> {
+        self.client.checkpoint_bytes().map_err(failure)
+    }
+
+    /// Restore a previously authenticated checkpoint. Deliberately FAILS
+    /// CLOSED: the new client cannot send until ordered, verified MLS
+    /// catch-up proves it has the current epoch.
+    pub fn restore_checkpoint_untrusted(bytes: &[u8]) -> Result<BrowserMlsClient, JsValue> {
+        Ok(Self {
+            client: Client::restore_checkpoint_untrusted(bytes).map_err(failure)?
+        })
+    }
+
     pub fn start_group(&mut self) -> Result<(), JsValue> {
         self.client.start_group().map_err(failure)
     }
@@ -92,6 +108,10 @@ impl BrowserMlsClient {
             out.push(&obj);
         }
         Ok(out)
+    }
+
+    pub fn own_signature_key_hex(&self) -> String {
+        hex::encode(self.client.own_signature_key())
     }
 
     pub fn epoch(&self) -> Result<u64, JsValue> {

@@ -37,6 +37,16 @@ try{
  assert.match(invite,/#pictorust=mls1&room=/);
  assert.ok(!invite.includes("auth."),"never expose owner auth token");
  const ownerRoom=await alice.locator("#room").inputValue();
+ // Delay the first owner poll so the guest receives several HTTP 202
+ // responses before an authenticated Welcome exists.
+ let slowedFirstPoll=false;
+ await alice.route("**/mls/join/pending/**",async route=>{
+   if(!slowedFirstPoll){
+     slowedFirstPoll=true;
+     await new Promise(resolve=>setTimeout(resolve,1750));
+   }
+   await route.continue();
+ });
  await bob.goto(invite,{waitUntil:"domcontentloaded"});
  await bob.waitForFunction(()=>document.querySelector("#status").textContent.includes("Gruppenbeitritt erfolgreich"),null,{timeout:30000});
  assert.equal(await bob.locator("#room").inputValue(),ownerRoom);
@@ -129,6 +139,19 @@ try{
  await bob.locator("#send").click();
  await alice.locator("#messages").getByText("Antwort nach sicherer Wiederverbindung")
    .waitFor({timeout:12000});
+ // A storage failure must halt the real original chat BEFORE transmission:
+ // its ratchet advanced, so plaintext must never be sent with unsafe state.
+ await alice.evaluate(()=>{
+   window.indexedDB.open=()=>{throw Error("simulated encrypted vault outage");};
+ });
+ await alice.locator("#text").fill("MUST NOT REACH BOB");
+ await alice.locator("#send").click();
+ await alice.waitForFunction(()=>document.querySelector("#status").textContent.includes("Checkpoint"),
+   null,{timeout:12000});
+ assert.equal(await alice.locator("#text").inputValue(),"MUST NOT REACH BOB",
+   "unsafe MLS send must keep the original text draft for the user");
+ assert.equal((await bob.locator("#messages").textContent()).includes("MUST NOT REACH BOB"),false,
+   "a failed durable checkpoint MUST NOT transmit MLS ciphertext");
  assert.deepEqual(failures,[]);
  console.log("OpenMLS behind unchanged original DS UI: invitation, text, drawings, PDF and authenticated fresh-key recovery passed");
 }finally{await browser.close();}

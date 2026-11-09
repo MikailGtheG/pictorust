@@ -46,6 +46,11 @@ same-origin Rust relay and Caddy on one machine; do not expose TCP 8787.
   authenticated and not trusted by the relay.
 - Browser JavaScript, OpenMLS WASM, and its MLS private keys **stay on the
   client**. The relay transports ciphertext and transient Welcome material.
+- The P0 experimental branch also keeps up to 64 encrypted MLS frames /
+  128 KiB per room in RAM for at most 30 minutes, while the room remains
+  active. This is **ciphertext retention**, not zero server storage;
+  the history is lost on restart or expiry and may be truncated sooner.
+  The full offline synchronization protocol is not yet deployed.
 - The server and invitations are *ephemeral*. An invitation secret is a
   bearer credential: anyone possessing the link can request admission
   while the owner is online. Share only over a trustworthy channel and

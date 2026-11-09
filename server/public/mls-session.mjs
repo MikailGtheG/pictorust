@@ -42,7 +42,8 @@ export function consumeMlsLink(){
 export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnect,onReady}) {
   let client=null,ws=null,owner=false,joinSecret=null,ownerKey=null,
       pendingPoll=null,closed=false,receiveQueue=Promise.resolve(),
-      joinInvite=null,memberToken=null,rejoinAttempts=0,rejoining=false;
+      joinInvite=null,memberToken=null,rejoinAttempts=0,rejoining=false,
+      checkpointRevision=0,stateQueue=Promise.resolve();
   const sent=new Set(),processed=new Set();
   const status=s=>onStatus?.(s);
   const auth=()=>({Authorization:"Bearer "+token()});
@@ -53,6 +54,49 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
     if(!response.ok)throw Error("MLS Server "+response.status);
     return response;
   };
+  // Serialize ALL group mutations so an MLS ratchet cannot advance while
+  // a previous checkpoint write is still pending. The queue recovers from
+  // individual rejected jobs, but the caller must fail the session closed.
+  function serializeState(fn){
+    const task=stateQueue.then(async()=>{
+      if(closed)throw Error("MLS-Sitzung beendet");
+      return fn();
+    });
+    stateQueue=task.catch(()=>{});
+    return task;
+  }
+  async function checkpoint(){
+    const pinned=owner ? ownerKey : joinInvite?.owner;
+    const device=client?.own_signature_key_hex();
+    if(!client||!client.synchronized()||!validHex(pinned,64)||!validHex(device,64))
+      throw Error("Cannot persist unauthenticated MLS group");
+    if(!Number.isSafeInteger(checkpointRevision+1))
+      throw Error("MLS checkpoint revision exhausted");
+    const plaintext=client.checkpoint_plaintext();
+    try{
+      const {saveSealedCheckpoint,readSealedCheckpoint}=
+        await import("/mls/vault.mjs");
+      if(checkpointRevision===0){
+        // A verified fresh Welcome may replace an older checkpoint, but
+        // must NEVER roll the group back to an older MLS epoch.
+        const old=await readSealedCheckpoint({room:room(),owner:pinned,device});
+        if(old){
+          try{
+            if(old.epoch>Number(client.epoch()))
+              throw Error("Refusing older MLS epoch than authenticated local checkpoint");
+            checkpointRevision=old.sequence;
+          }finally{old.plaintext.fill(0);}
+        }
+      }
+      await saveSealedCheckpoint({
+        room:room(),owner:pinned,device,epoch:Number(client.epoch()),
+        sequence:checkpointRevision+1,plaintext
+      });
+      checkpointRevision++;
+    }finally{
+      plaintext.fill(0);
+    }
+  }
   function fail(text){
     if(closed)return;
     status(text);
@@ -88,6 +132,7 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
           onDisconnect?.();
           status("MLS-Verbindung verloren · neuer sicherer Gruppenbeitritt …");
           const previous=memberToken,invite=joinInvite;
+          const oldDevice=client?.own_signature_key_hex();
           ws=null;
           client?.dispose();client=null;
           sent.clear();processed.clear();receiveQueue=Promise.resolve();
@@ -95,6 +140,14 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
             await sleep(700);
             if(closed)return;
             await joinWithInvite(invite,previous);
+            // A revoked MLS device must not retain an obsolete encrypted
+            // checkpoint once the newly authenticated member is persisted.
+            if(validHex(oldDevice,64)){
+              const {deleteSealedCheckpoint}=await import("/mls/vault.mjs");
+              await deleteSealedCheckpoint({
+                room:invite.room,owner:invite.owner,device:oldDevice
+              });
+            }
             rejoining=false;
             status("MLS wiederverbunden · neue Schlüssel bestätigt");
           })().catch(e=>fail("Sichere Wiederverbindung fehlgeschlagen: "+(e?.message||String(e))));
@@ -104,7 +157,7 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
       };
       socket.onmessage=event=>{
         if(!(event.data instanceof ArrayBuffer))return fail("Ungültige Transportdaten");
-        receiveQueue=receiveQueue.then(()=>{
+        receiveQueue=receiveQueue.then(()=>serializeState(async()=>{
           if(closed||!client||!client.synchronized())return;
           const bytes=new Uint8Array(event.data);
           if(bytes.length>MAX_WIRE||bytes.length<3||bytes[0]!==3||
@@ -115,22 +168,30 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
           if(processed.size>1000)processed.clear();
           processed.add(signature);
           const message=client.process(bytes);
+          // State must be durable BEFORE the application sees decrypted
+          // content; otherwise a crash could roll the MLS ratchet back.
+          await checkpoint();
           if(message.kind==="application"){
             const data=JSON.parse(decoder.decode(message.payload));
             onMessage?.(data);
           }else if(message.kind==="removed"){
             throw Error("Aus MLS-Gruppe entfernt");
           }
-        }).catch(e=>fail("MLS-Sicherheitsprüfung fehlgeschlagen: "+(e?.message||String(e))));
+        })).catch(e=>fail("MLS-Sicherheitsprüfung fehlgeschlagen: "+(e?.message||String(e))));
       };
     });
     onReady?.();
   }
-  function transmit(bytes){
+  async function transmit(bytes){
     if(closed||ws?.readyState!==WebSocket.OPEN||!client?.synchronized())
       throw Error("MLS-Sitzung nicht verbunden");
     if(bytes.length<3||bytes.length>MAX_WIRE||bytes[0]!==3)
       throw Error("MLS-Nachricht ungültig");
+    // write-ahead: a failed checkpoint is a hard stop, never send ciphertext
+    // produced from a ratchet state that cannot survive a browser crash.
+    await checkpoint();
+    if(closed||ws?.readyState!==WebSocket.OPEN)
+      throw Error("MLS-Verbindung bei Checkpoint unterbrochen");
     sent.add(toBase64(bytes));
     ws.send(bytes);
   }
@@ -141,9 +202,10 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
     handlePending.busy=true;
     try{
       const response=await fetch("/mls/join/pending/"+room(),{
-        cache:"no-store",headers:auth()});
+        method:"POST",cache:"no-store",headers:auth()});
       if(!response.ok)throw Error("Einladungsabfrage "+response.status);
       const requests=await response.json();
+      await serializeState(async()=>{
       for(const request of requests){
         if(closed)break;
         // The relay verified possession of the old member-only bearer,
@@ -153,7 +215,7 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
           if(!Number.isInteger(oldLeaf)||oldLeaf<=0)
             throw Error("Ungültige vorherige MLS-Mitgliedschaft");
           const removal=client.remove_member(oldLeaf);
-          transmit(removal);
+          await transmit(removal);
           const revoke=await fetch("/mls/revoke/"+room()+"/"+oldLeaf,{
             method:"POST",cache:"no-store",headers:auth()
           });
@@ -166,11 +228,12 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
         const result=await post("/mls/invite/"+room()+"/"+member.leaf,{},auth());
         const admission=await result.json();
         if(!validHex(admission.token,64))throw Error("Mitglied-Zugang ungültig");
-        transmit(commit);
+        await transmit(commit);
         await post("/mls/join/complete/"+room()+"/"+request.id,{
           welcome:toBase64(welcome),tree:toBase64(tree),token:admission.token
         },auth());
       }
+      });
     }catch(e){fail("MLS-Gruppenverwaltung unterbrochen: "+(e?.message||String(e)));}
     finally{handlePending.busy=false;}
   }
@@ -191,8 +254,15 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
       let joined=null;
       while(Date.now()<until&&!closed){
         await sleep(450);
-        const r=await post("/mls/join/result/"+invite.room+"/"+id,{secret:invite.secret});
+        const r=await fetch("/mls/join/result/"+invite.room+"/"+id,{
+          method:"POST",cache:"no-store",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({secret:invite.secret})
+        });
+        // 202 means the owner has not finished the authenticated Welcome.
+        // It is an expected poll result, never a fatal HTTP error.
         if(r.status===202)continue;
+        if(!r.ok)throw Error("MLS-Welcome-Abfrage "+r.status);
         joined=await r.json();break;
       }
       if(!joined)throw Error("Einladung abgelaufen. Gruppeninhaber muss online sein");
@@ -201,6 +271,8 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
       if(!client.members().some(m=>m.signatureKeyHex===invite.owner))
         throw Error("Signatur des Gruppenerstellers weicht vom Einladungslink ab");
       client.pin_owner(fromHex(invite.owner));
+      joinInvite=invite;
+      await checkpoint();
       await connect(joined.token);
       memberToken=joined.token;
       joinInvite=invite;
@@ -214,6 +286,7 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
       client=new C(name());client.start_group();
       ownerKey=client.members()[0].signatureKeyHex;
       owner=true;
+      await checkpoint();
       const secret=crypto.getRandomValues(new Uint8Array(32));
       joinSecret=hex(secret);secret.fill(0);
       await connect(token());
@@ -229,16 +302,31 @@ export function createMlsSession({name,room,token,onMessage,onStatus,onDisconnec
       return location.origin+location.pathname+"#"+fragment;
     },
     async join(invite){return joinWithInvite(invite);},
-    send(data){
-      const bytes=encoder.encode(JSON.stringify(data));
-      if(bytes.length>8000)throw Error("Text oder Zeichnung zu groß");
-      transmit(client.send(bytes));
-      onMessage?.(data);
+    async send(data){
+      return serializeState(async()=>{
+        const bytes=encoder.encode(JSON.stringify(data));
+        if(bytes.length>8000)throw Error("Text oder Zeichnung zu groß");
+        await transmit(client.send(bytes));
+        onMessage?.(data);
+      }).catch(e=>{
+        fail("MLS-Checkpoint oder Versand fehlgeschlagen: "+(e?.message||String(e)));
+        throw e;
+      });
     },
     active(){return !closed&&!!client?.synchronized()&&ws?.readyState===WebSocket.OPEN;},
     close(){
       if(pendingPoll)clearInterval(pendingPoll);
+      const device=client?.own_signature_key_hex();
       closed=true;ws?.close();client?.dispose();client=null;joinSecret=null;
+      // An explicit logout must discard its stored recovery copy too.
+      // Closing a browser/tab without calling close() preserves the copy.
+      const pinned=owner?ownerKey:joinInvite?.owner;
+      const id=room();
+      if(validHex(pinned,64)&&validHex(id,32)&&validHex(device,64)){
+        import("/mls/vault.mjs").then(m=>m.deleteSealedCheckpoint({
+          room:id,owner:pinned,device
+        })).catch(()=>{});
+      }
       joinInvite=null;memberToken=null;
       sent.clear();processed.clear();
     },
