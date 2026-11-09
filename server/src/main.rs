@@ -161,6 +161,7 @@ fn router(state: AppState) -> Router {
         .route("/mls/healthz", get(mls_readiness))
         .route("/mls/app.mjs", get(mls_app_module))
         .route("/mls/session.mjs", get(mls_session_module))
+        .route("/mls/vault.mjs", get(mls_vault_module))
         .route("/mls/pkg/{name}", get(mls_wasm_asset))
         .route("/original/images/{name}", get(original_picto_image))
         .route("/original/nds.ttf", get(original_picto_font))
@@ -308,6 +309,15 @@ fn serve_html(document: &'static str, style_self: bool) -> Response {
 
 async fn mls_home() -> Response {
     serve_html(include_str!("../public/mls.html"),true)
+}
+
+async fn mls_vault_module() -> (
+    [(axum::http::header::HeaderName,&'static str);2],&'static str
+){
+    ([
+        (axum::http::header::CONTENT_TYPE,"text/javascript; charset=utf-8"),
+        (axum::http::header::CACHE_CONTROL,"no-store")
+    ],include_str!("../public/mls-vault.mjs"))
 }
 
 async fn mls_session_module() -> (
